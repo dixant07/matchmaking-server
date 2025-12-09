@@ -1,0 +1,36 @@
+{
+    "name": "matchmaking-server",
+    "version": "1.0.0",
+    "description": "Standalone WebSocket matchmaking and signaling server",
+    "main": "dist/index.js",
+    "scripts": {
+        "dev": "nodemon src/index.ts",
+        "build": "tsc",
+        "start": "node dist/index.js"
+    },
+    "keywords": [
+        "websocket",
+        "matchmaking",
+        "signaling",
+        "webrtc"
+    ],
+    "engines": {
+        "node": ">=20.0.0"
+    },
+    "author": "",
+    "license": "ISC",
+    "type": "commonjs",
+    "dependencies": {
+        "@socket.io/redis-adapter": "^8.3.0",
+        "dotenv": "^17.2.3",
+        "firebase-admin": "^13.6.0",
+        "redis": "^5.10.0",
+        "socket.io": "^4.8.1"
+    },
+    "devDependencies": {
+        "@types/node": "^20.17.9",
+        "nodemon": "^3.1.11",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.9.3"
+    }
+}

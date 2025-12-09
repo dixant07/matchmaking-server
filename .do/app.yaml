@@ -1,0 +1,42 @@
+name: matchmaking-server
+region: blr
+services:
+  - name: matchmaking
+    dockerfile_path: Dockerfile
+    source_dir: /
+    http_port: 8080
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    routes:
+      - path: /
+    health_check:
+      http_path: /health
+      initial_delay_seconds: 10
+      period_seconds: 30
+      timeout_seconds: 10
+      success_threshold: 1
+      failure_threshold: 3
+    envs:
+      - key: PORT
+        value: "8080"
+      - key: FIREBASE_PROJECT_ID
+        scope: RUN_TIME
+        type: SECRET
+      - key: FIREBASE_SERVICE_ACCOUNT_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: MATCHMAKING_SERVER_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: GAME_TURN_URL
+        scope: RUN_TIME
+        type: SECRET
+      - key: GAME_TURN_SECRET
+        scope: RUN_TIME
+        type: SECRET
+      - key: VIDEO_TURN_URL
+        scope: RUN_TIME
+        type: SECRET
+      - key: VIDEO_TURN_SECRET
+        scope: RUN_TIME
+        type: SECRET
