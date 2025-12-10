@@ -18,20 +18,24 @@ import { banService } from './services/BanService';
 const port = process.env.PORT || 5000;
 const ADMIN_SERVER_KEY = process.env.MATCHMAKING_SERVER_KEY || 'server-secret-key';
 
+// Socket.IO path - configurable via env or default to /matchmaking-server
+const SOCKET_PATH = process.env.SOCKET_IO_PATH || '/matchmaking-server';
+
 // Create HTTP server (no Express needed for pure WebSocket)
 const server = http.createServer((req, res) => {
-    // Simple health check endpoint
-    if (req.url === '/health') {
+    // Simple health check endpoint - respond on both root and prefixed paths
+    if (req.url === '/health' || req.url === `${SOCKET_PATH}/health`) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok', service: 'matchmaking' }));
+        res.end(JSON.stringify({ status: 'ok', service: 'matchmaking', path: SOCKET_PATH }));
         return;
     }
     res.writeHead(404);
     res.end('Not Found');
 });
 
-// Socket.IO server with CORS
+// Socket.IO server with CORS and custom path
 const io = new Server(server, {
+    path: SOCKET_PATH,
     cors: {
         origin: true, // Allow any origin
         methods: ["GET", "POST"],
@@ -409,5 +413,6 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 const host = '0.0.0.0';
 server.listen(Number(port), host, () => {
     console.log(`🚀 Matchmaking server is running on http://${host}:${port}`);
+    console.log(`[Server] Socket.IO path: ${SOCKET_PATH}`);
     console.log(`[Server] Health check available at http://${host}:${port}/health`);
 });

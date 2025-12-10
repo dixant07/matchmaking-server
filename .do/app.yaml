@@ -8,7 +8,7 @@ services:
     instance_count: 1
     instance_size_slug: basic-xxs
     routes:
-      - path: /socket.io
+      - path: /matchmaking-server
     health_check:
       http_path: /health
       initial_delay_seconds: 10
