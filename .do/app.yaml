@@ -8,7 +8,7 @@ services:
     instance_count: 1
     instance_size_slug: basic-xxs
     routes:
-      - path: /
+      - path: /socket.io
     health_check:
       http_path: /health
       initial_delay_seconds: 10
