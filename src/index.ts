@@ -18,8 +18,8 @@ import { banService } from './services/BanService';
 const port = process.env.PORT || 5000;
 const ADMIN_SERVER_KEY = process.env.MATCHMAKING_SERVER_KEY || 'server-secret-key';
 
-// Socket.IO path - configurable via env or default to /matchmaking-server
-const SOCKET_PATH = process.env.SOCKET_IO_PATH || '/matchmaking-server';
+// Socket.IO path - configurable via env or default to /socket.io
+const SOCKET_PATH = process.env.SOCKET_IO_PATH || '/socket.io';
 
 // Create HTTP server (no Express needed for pure WebSocket)
 const server = http.createServer((req, res) => {
