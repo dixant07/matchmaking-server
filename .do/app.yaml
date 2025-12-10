@@ -9,6 +9,7 @@ services:
     instance_size_slug: basic-xxs
     routes:
       - path: /matchmaking-server
+        preserve_path_prefix: true
     health_check:
       http_path: /health
       initial_delay_seconds: 10
@@ -19,6 +20,8 @@ services:
     envs:
       - key: PORT
         value: "8080"
+      - key: SOCKET_IO_PATH
+        value: "/matchmaking-server"
       - key: FIREBASE_PROJECT_ID
         scope: RUN_TIME
         type: SECRET
