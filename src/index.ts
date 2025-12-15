@@ -370,6 +370,11 @@ io.on('connection', (socket: any) => {
         sessionService.handleSkipMatch(socket.id, io);
     });
 
+    socket.on('leave_queue', () => {
+        console.log(`[Queue] User ${socket.user?.uid} manually left the queue.`);
+        removeFromQueue(socket.id); // This function is already imported from matchController
+    });
+
     // ===============================
     // Admin Commands (from REST API server)
     // ===============================
