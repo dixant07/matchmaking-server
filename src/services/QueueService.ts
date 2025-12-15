@@ -1,6 +1,7 @@
 import { db } from '../config/firebase';
 import * as admin from 'firebase-admin';
 import { sessionService } from './SessionService';
+import { Socket } from 'dgram';
 
 export interface QueueUser {
     socketId: string;
@@ -77,6 +78,13 @@ class QueueService {
             if (candidate.socketId === user.socketId) return false;
             if (candidate.uid === user.uid) return false; // Prevent self-match
 
+            // ADD THIS CHECK: Verify candidate socket is still active in IO
+            const candidateSocket = socket.server.sockets.sockets.get(candidate.socketId);
+            if (!candidateSocket) {
+                // Lazily remove stale user found during search
+                this.removeFromQueue(candidate.socketId);
+                return false;
+            }
             // 1. Gender Check (Reciprocal)
             // Does candidate match user's want? (Already filtered by targetQueue selection mostly, but check 'any')
             if (targetGender !== 'any' && candidate.gender !== targetGender) return false;
@@ -184,6 +192,9 @@ class QueueService {
         this.processWidening();
 
         [...this.queues.male, ...this.queues.female].forEach(user => {
+            // Check if user was removed by a previous iteration in this very loop
+            const isStillInQueue = this.queues.male.includes(user) || this.queues.female.includes(user);
+            if (!isStillInQueue) return; // SKIP if already matched
             const socket = io.sockets.sockets.get(user.socketId);
             if (socket) {
                 this.findMatch(user, socket);
