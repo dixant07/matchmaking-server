@@ -181,6 +181,22 @@ class SessionService {
         }
     }
 
+    // Add this method to SessionService class
+    public clearSession(uid: string) {
+        if (this.sessionCache.has(uid)) {
+            const session = this.sessionCache.get(uid)!;
+            console.log(`[Session] Clearing stale session for ${uid} (was with ${session.opponentId})`);
+            this.sessionCache.delete(uid);
+
+            // Optional: Clean up the opponent's session too so they don't think they are still connected
+            // But be careful not to break their potential reconnect if this was a mistake. 
+            // Usually, if one sides clears, the session is dead.
+            if (this.sessionCache.has(session.opponentId)) {
+                this.sessionCache.delete(session.opponentId);
+            }
+        }
+    }
+
     private finalizeConnection(roomId: string, io: Server) {
         const room = this.activeRooms.get(roomId);
         if (!room) return;

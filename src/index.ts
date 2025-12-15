@@ -248,6 +248,16 @@ io.on('connection', (socket: any) => {
 
         if (targetUid === socket.user?.uid) return;
 
+        // [FIX] Priority Logic: 
+        // 1. If 'to' (Socket ID) is provided, use it DIRECTLY. This is the most accurate target for a new match.
+        // 2. Only use 'targetUid' / 'sessionService' lookup if 'to' is missing.
+
+        if (to) {
+            // Direct socket routing (Reliable for fresh matches)
+            io.to(to).emit('video-offer', { offer, from: socket.id, fromUid: socket.user.uid });
+            return;
+        }
+
         if (!targetUid && socket.user?.uid) {
             targetUid = sessionService.getOpponentUid(socket.user.uid);
         }

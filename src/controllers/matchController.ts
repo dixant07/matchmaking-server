@@ -1,6 +1,7 @@
 import { db } from '../config/firebase';
 import { queueService, QueueUser } from '../services/QueueService';
 import { banService } from '../services/BanService';
+import { sessionService } from '../services/SessionService';
 
 export const joinQueue = async (socket: any, data: any) => {
     const { mode, preferences } = data;
@@ -24,6 +25,10 @@ export const joinQueue = async (socket: any, data: any) => {
         });
         return;
     }
+
+    // [FIX] Clear any existing session logic before joining queue
+    // This ensures we don't route signals to an old disconnected partner
+    sessionService.clearSession(uid);
 
     // Optimization: Check if gender is in the token (Custom Claims)
     let gender = socket.user.gender;
