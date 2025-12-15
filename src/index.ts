@@ -277,6 +277,15 @@ io.on('connection', (socket: any) => {
     socket.on('video-answer', (data: any) => {
         let { answer, to, targetUid } = data;
 
+        // If targetUid is provided (which it should be), use it to find the FRESH socket
+        if (!to && targetUid) {
+            const sockets = sessionService.getSocketIdsForUser(targetUid);
+            sockets.forEach(sid => {
+                io.to(sid).emit('video-answer', { answer, from: socket.id });
+            });
+            return;
+        }
+
         if (targetUid === socket.user?.uid) return;
 
         if (!targetUid && socket.user?.uid) {

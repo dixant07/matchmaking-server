@@ -247,6 +247,20 @@ class SessionService {
                 iceServers: buildIceServersForUser(uid),
                 isReconnection: true
             });
+
+            // [FIX] Notify THE OPPONENT that I am back
+            // This ensures they are ready to receive my new Video Offer
+            const opponentSockets = this.getSocketIdsForUser(session.opponentId);
+            opponentSockets.forEach(sid => {
+                // We send a specific event or just 'user_reconnected'
+                // But for simplicity, we can just trigger them to expect a new offer
+                // or technically, we don't need to send anything IF the "Offer" arrives correctly.
+                // However, updating their UI is helpful.
+                socket.to(sid).emit('opponent_reconnected', {
+                    message: 'Opponent is back online'
+                });
+            });
+
             restored = true;
         }
 
