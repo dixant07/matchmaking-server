@@ -93,7 +93,7 @@ class SessionService {
     private socketToUid = new Map<string, string>();
 
     // Map uid to socketIds (one user can have multiple tabs/connections)
-    private uidToSocket = new Map<string, Set<string>>();
+    private uidToSocket = new Map<string, string>();
 
     constructor() {
         // Cleanup interval for stale rooms/sessions could go here
@@ -102,15 +102,18 @@ class SessionService {
     public registerSocket(socketId: string, uid: string) {
         this.socketToUid.set(socketId, uid);
 
-        if (!this.uidToSocket.has(uid)) {
-            this.uidToSocket.set(uid, new Set());
+        // Enforce 1 User = 1 Socket. Overwrite any existing socket.
+        const existingSocket = this.uidToSocket.get(uid);
+        if (existingSocket && existingSocket !== socketId) {
+            console.log(`[Session] User ${uid} new connection. Overwriting old socket ${existingSocket}`);
+            // Note: We don't necessarily disconnect the old socket here, but we stop tracking it.
         }
-        this.uidToSocket.get(uid)?.add(socketId);
+        this.uidToSocket.set(uid, socketId);
     }
 
     public getSocketIdsForUser(uid: string): string[] {
-        const sockets = this.uidToSocket.get(uid);
-        return sockets ? Array.from(sockets) : [];
+        const socketId = this.uidToSocket.get(uid);
+        return socketId ? [socketId] : [];
     }
 
     public createRoom(userA: { uid: string; socketId: string }, userB: { uid: string; socketId: string }, io: Server, mode: 'random' | 'video' = 'random') {
@@ -202,12 +205,9 @@ class SessionService {
         if (uid) {
             this.socketToUid.delete(socketId);
 
-            const userSockets = this.uidToSocket.get(uid);
-            if (userSockets) {
-                userSockets.delete(socketId);
-                if (userSockets.size === 0) {
-                    this.uidToSocket.delete(uid);
-                }
+            const userSocket = this.uidToSocket.get(uid);
+            if (userSocket === socketId) {
+                this.uidToSocket.delete(uid);
             }
 
             console.log(`[Session] User ${uid} disconnected.`);

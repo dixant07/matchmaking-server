@@ -28,6 +28,9 @@ class QueueService {
     }
 
     public async joinQueue(user: QueueUser, socket: any) {
+        // Ensure user is not already in any queue (prevent duplicates/self-match setup)
+        this.removeUserByUid(user.uid);
+
         // Add to appropriate partition
         if (user.gender === 'male') {
             this.queues.male.push(user);
@@ -44,6 +47,11 @@ class QueueService {
     public removeFromQueue(socketId: string) {
         this.queues.male = this.queues.male.filter(u => u.socketId !== socketId);
         this.queues.female = this.queues.female.filter(u => u.socketId !== socketId);
+    }
+
+    public removeUserByUid(uid: string) {
+        this.queues.male = this.queues.male.filter(u => u.uid !== uid);
+        this.queues.female = this.queues.female.filter(u => u.uid !== uid);
     }
 
     private findMatch(user: QueueUser, socket: any) {
@@ -67,6 +75,7 @@ class QueueService {
         // Filter matches
         const matchIndex = potentialMatches.findIndex(candidate => {
             if (candidate.socketId === user.socketId) return false;
+            if (candidate.uid === user.uid) return false; // Prevent self-match
 
             // 1. Gender Check (Reciprocal)
             // Does candidate match user's want? (Already filtered by targetQueue selection mostly, but check 'any')

@@ -172,6 +172,12 @@ io.on('connection', (socket: any) => {
     socket.on('offer', (data: any) => {
         let { offer, to, targetUid } = data;
 
+        // Loopback Prevention
+        if (targetUid === socket.user?.uid) {
+            console.warn(`[Signal] Blocked self-offer from ${socket.user.uid}`);
+            return;
+        }
+
         // Fallback: If no targetUid, find opponent associated with this socket's user
         if (!targetUid && socket.user?.uid) {
             targetUid = sessionService.getOpponentUid(socket.user.uid);
@@ -198,6 +204,8 @@ io.on('connection', (socket: any) => {
     socket.on('answer', (data: any) => {
         let { answer, to, targetUid } = data;
 
+        if (targetUid === socket.user?.uid) return;
+
         if (!targetUid && socket.user?.uid) {
             targetUid = sessionService.getOpponentUid(socket.user.uid);
             if (targetUid) console.log(`[Signal] Resolved opponent UID for answer: ${targetUid}`);
@@ -218,6 +226,8 @@ io.on('connection', (socket: any) => {
     socket.on('ice-candidate', (data: any) => {
         let { candidate, to, targetUid } = data;
 
+        if (targetUid === socket.user?.uid) return;
+
         if (!targetUid && socket.user?.uid) {
             targetUid = sessionService.getOpponentUid(socket.user.uid);
         }
@@ -235,6 +245,8 @@ io.on('connection', (socket: any) => {
     // Video Signaling
     socket.on('video-offer', (data: any) => {
         let { offer, to, targetUid } = data; // Check if client sends targetUid for video
+
+        if (targetUid === socket.user?.uid) return;
 
         if (!targetUid && socket.user?.uid) {
             targetUid = sessionService.getOpponentUid(socket.user.uid);
@@ -255,6 +267,8 @@ io.on('connection', (socket: any) => {
     socket.on('video-answer', (data: any) => {
         let { answer, to, targetUid } = data;
 
+        if (targetUid === socket.user?.uid) return;
+
         if (!targetUid && socket.user?.uid) {
             targetUid = sessionService.getOpponentUid(socket.user.uid);
         }
@@ -273,6 +287,8 @@ io.on('connection', (socket: any) => {
 
     socket.on('video-ice-candidate', (data: any) => {
         let { candidate, to, targetUid } = data;
+
+        if (targetUid === socket.user?.uid) return;
 
         if (!targetUid && socket.user?.uid) {
             targetUid = sessionService.getOpponentUid(socket.user.uid);
