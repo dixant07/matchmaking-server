@@ -382,10 +382,11 @@ io.on('connection', (socket: any) => {
     });
 });
 
-// Run widening check periodically
+// Run widening check and cleanup periodically
 setInterval(() => {
     queueService.processMatches(io);
-}, 5000);
+    sessionService.cleanupStaleRooms(io);
+}, 2000);
 
 // Graceful shutdown handler
 const gracefulShutdown = (signal: string) => {

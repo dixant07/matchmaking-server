@@ -24,8 +24,7 @@ class QueueService {
     };
 
     constructor() {
-        // Start widening interval
-        setInterval(() => this.processWidening(), 5000);
+        // No internal interval - controlled by main loop
     }
 
     public async joinQueue(user: QueueUser, socket: any) {
@@ -94,12 +93,9 @@ class QueueService {
             const match = potentialMatches[matchIndex];
             this.executeMatch(user, match, socket);
         } else {
-            // No match found, notify user they're in queue
-            socket.emit('queued', {
-                message: 'Waiting for a match...',
-                queuePosition: this.getQueuePosition(user)
-            });
-            console.log(`[Queue] User ${user.uid} added to queue, no immediate match found`);
+            // Only emit queued status on initial join, not on every tick to avoid spamming
+            // We can check if it's a new join via a flag or just rely on client to show "Searching..."
+            // console.log(`[Queue] User ${user.uid} added to queue, no immediate match found`);
         }
     }
 
@@ -174,10 +170,16 @@ class QueueService {
 
     // Helper to inject IO for widening matches if needed
     public processMatches(io: any) {
+        // Run widening first to ensure eligible users can be matched immediately
+        this.processWidening();
+
         [...this.queues.male, ...this.queues.female].forEach(user => {
             const socket = io.sockets.sockets.get(user.socketId);
             if (socket) {
                 this.findMatch(user, socket);
+            } else {
+                // Remove stale socket if not found
+                this.removeFromQueue(user.socketId);
             }
         });
     }

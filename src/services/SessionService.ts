@@ -205,22 +205,54 @@ class SessionService {
     }
 
     public handleReconnection(socket: Socket, uid: string) {
-        if (!this.sessionCache.has(uid)) {
-            // No active session
-            return;
+        let restored = false;
+
+        // 1. Check Session Cache (Established connections)
+        if (this.sessionCache.has(uid)) {
+            const session = this.sessionCache.get(uid)!;
+            console.log(`[Session] User ${uid} resuming active session in ${session.roomId}`);
+
+            socket.emit('match_found', {
+                roomId: session.roomId,
+                role: session.role,
+                opponentId: session.opponentId,
+                isInitiator: session.role === 'A',
+                iceServers: buildIceServersForUser(uid),
+                isReconnection: true
+            });
+            restored = true;
         }
 
-        const session = this.sessionCache.get(uid)!;
-        console.log(`[Session] User ${uid} resuming session in ${session.roomId}`);
+        // 2. Check Active Rooms (Pending/Handshake connections)
+        if (!restored) {
+            for (const [roomId, room] of this.activeRooms.entries()) {
+                if (room.playerA.uid === uid || room.playerB.uid === uid) {
+                    console.log(`[Session] User ${uid} resuming pending handshake in ${roomId}`);
 
-        socket.emit('match_found', {
-            roomId: session.roomId,
-            role: session.role,
-            opponentId: session.opponentId,
-            isInitiator: session.role === 'A',
-            iceServers: buildIceServersForUser(uid),
-            isReconnection: true
-        });
+                    // Determine role
+                    const isPlayerA = room.playerA.uid === uid;
+                    const opponent = isPlayerA ? room.playerB : room.playerA;
+                    const role = isPlayerA ? 'A' : 'B';
+
+                    // Update socket ID if different
+                    if (isPlayerA) room.playerA.socketId = socket.id;
+                    else room.playerB.socketId = socket.id;
+                    this.registerSocket(socket.id, uid);
+
+                    socket.emit('match_found', {
+                        roomId,
+                        role,
+                        opponentId: opponent.socketId,
+                        opponentUid: opponent.uid,
+                        isInitiator: isPlayerA,
+                        iceServers: buildIceServersForUser(uid),
+                        isReconnection: true
+                    });
+                    restored = true;
+                    break;
+                }
+            }
+        }
     }
 
     public hasActiveSession(uid: string): boolean {
@@ -280,6 +312,28 @@ class SessionService {
      */
     public getIceServersConfig(uid: string = 'anonymous') {
         return buildIceServersForUser(uid);
+    }
+
+    public cleanupStaleRooms(io: Server) {
+        const now = Date.now();
+        const TIMEOUT = 30000; // 30 seconds
+
+        for (const [roomId, room] of this.activeRooms.entries()) {
+            if (now - room.createdAt > TIMEOUT) {
+                console.warn(`[Session] Room ${roomId} timed out (Stale). Cleaning up.`);
+
+                // Notify players
+                [room.playerA, room.playerB].forEach(player => {
+                    const socket = io.sockets.sockets.get(player.socketId);
+                    if (socket) {
+                        socket.emit('match_error', { message: 'Match timed out during connection' });
+                        // Optionally re-queue them or let client handle it
+                    }
+                });
+
+                this.activeRooms.delete(roomId);
+            }
+        }
     }
 }
 
