@@ -7,6 +7,7 @@ interface RoomData {
     playerB: { uid: string; socketId: string };
     gameReady: boolean;
     videoReady: boolean;
+    expectedServices: string[];
     createdAt: number;
 }
 
@@ -112,8 +113,13 @@ class SessionService {
         return sockets ? Array.from(sockets) : [];
     }
 
-    public createRoom(userA: { uid: string; socketId: string }, userB: { uid: string; socketId: string }, io: Server) {
+    public createRoom(userA: { uid: string; socketId: string }, userB: { uid: string; socketId: string }, io: Server, mode: 'random' | 'video' = 'random') {
         const roomId = `room_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+
+        const expectedServices = ['game'];
+        if (mode === 'video') {
+            expectedServices.push('video');
+        }
 
         const roomData: RoomData = {
             roomId,
@@ -121,6 +127,7 @@ class SessionService {
             playerB: userB,
             gameReady: false,
             videoReady: false,
+            expectedServices,
             createdAt: Date.now()
         };
 
@@ -158,7 +165,11 @@ class SessionService {
 
         console.log(`[Session] Room ${roomId}: ${service} connection stable.`);
 
-        if (room.gameReady && room.videoReady) {
+        // Check if all expected services are ready
+        const isGameSatisfied = room.expectedServices.includes('game') ? room.gameReady : true;
+        const isVideoSatisfied = room.expectedServices.includes('video') ? room.videoReady : true;
+
+        if (isGameSatisfied && isVideoSatisfied) {
             // Access io server via socket.nsp.server or cast to any if private
             const io = (socket as any).server || (socket.nsp as any).server;
             if (io) {
@@ -334,6 +345,22 @@ class SessionService {
                 this.activeRooms.delete(roomId);
             }
         }
+    }
+
+    public getOpponentUid(uid: string): string | null {
+        // 1. Check Session Cache (Established)
+        if (this.sessionCache.has(uid)) {
+            return this.sessionCache.get(uid)!.opponentId;
+        }
+
+        // 2. Check Active Rooms (Pending)
+        // Optimization: Could store a reverse map, but activeRooms is usually small
+        for (const room of this.activeRooms.values()) {
+            if (room.playerA.uid === uid) return room.playerB.uid;
+            if (room.playerB.uid === uid) return room.playerA.uid;
+        }
+
+        return null;
     }
 }
 

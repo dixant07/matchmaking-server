@@ -168,22 +168,41 @@ io.on('connection', (socket: any) => {
     socket.on('join_queue', (data: any) => joinQueue(socket, data));
 
     // WebRTC Signaling
+    // WebRTC Signaling
     socket.on('offer', (data: any) => {
-        const { offer, to, targetUid } = data;
+        let { offer, to, targetUid } = data;
+
+        // Fallback: If no targetUid, find opponent associated with this socket's user
+        if (!targetUid && socket.user?.uid) {
+            targetUid = sessionService.getOpponentUid(socket.user.uid);
+            if (targetUid) console.log(`[Signal] Resolved opponent UID for offer: ${targetUid}`);
+        }
+
         if (targetUid) {
             const sockets = sessionService.getSocketIdsForUser(targetUid);
             console.log(`[Signal] Relaying offer from ${socket.id} to user ${targetUid} (sockets: ${sockets.length})`);
+
+            if (sockets.length === 0) {
+                console.warn(`[Signal] Warning: No active sockets found for target user ${targetUid}`);
+            }
+
             sockets.forEach(sid => {
                 io.to(sid).emit('offer', { offer, from: socket.id, fromUid: socket.user.uid });
             });
         } else {
-            console.log(`[Signal] Relaying offer from ${socket.id} to ${to}`);
+            console.log(`[Signal] Relaying offer from ${socket.id} to socket ${to} (Fallback)`);
             io.to(to).emit('offer', { offer, from: socket.id, fromUid: socket.user.uid });
         }
     });
 
     socket.on('answer', (data: any) => {
-        const { answer, to, targetUid } = data;
+        let { answer, to, targetUid } = data;
+
+        if (!targetUid && socket.user?.uid) {
+            targetUid = sessionService.getOpponentUid(socket.user.uid);
+            if (targetUid) console.log(`[Signal] Resolved opponent UID for answer: ${targetUid}`);
+        }
+
         if (targetUid) {
             const sockets = sessionService.getSocketIdsForUser(targetUid);
             console.log(`[Signal] Relaying answer from ${socket.id} to user ${targetUid}`);
@@ -191,13 +210,18 @@ io.on('connection', (socket: any) => {
                 io.to(sid).emit('answer', { answer, from: socket.id });
             });
         } else {
-            console.log(`[Signal] Relaying answer from ${socket.id} to ${to}`);
+            console.log(`[Signal] Relaying answer from ${socket.id} to ${to} (Fallback)`);
             io.to(to).emit('answer', { answer, from: socket.id });
         }
     });
 
     socket.on('ice-candidate', (data: any) => {
-        const { candidate, to, targetUid } = data;
+        let { candidate, to, targetUid } = data;
+
+        if (!targetUid && socket.user?.uid) {
+            targetUid = sessionService.getOpponentUid(socket.user.uid);
+        }
+
         if (targetUid) {
             const sockets = sessionService.getSocketIdsForUser(targetUid);
             sockets.forEach(sid => {
@@ -210,21 +234,59 @@ io.on('connection', (socket: any) => {
 
     // Video Signaling
     socket.on('video-offer', (data: any) => {
-        const { offer, to } = data;
-        console.log(`[Signal] Relaying video-offer from ${socket.id} to ${to}`);
-        io.to(to).emit('video-offer', { offer, from: socket.id, fromUid: socket.user.uid });
+        let { offer, to, targetUid } = data; // Check if client sends targetUid for video
+
+        if (!targetUid && socket.user?.uid) {
+            targetUid = sessionService.getOpponentUid(socket.user.uid);
+        }
+
+        if (targetUid) {
+            console.log(`[Signal] Relaying video-offer from ${socket.id} to user ${targetUid}`);
+            const sockets = sessionService.getSocketIdsForUser(targetUid);
+            sockets.forEach(sid => {
+                io.to(sid).emit('video-offer', { offer, from: socket.id, fromUid: socket.user.uid });
+            });
+        } else {
+            console.log(`[Signal] Relaying video-offer from ${socket.id} to ${to} (Fallback)`);
+            io.to(to).emit('video-offer', { offer, from: socket.id, fromUid: socket.user.uid });
+        }
     });
 
     socket.on('video-answer', (data: any) => {
-        const { answer, to } = data;
-        console.log(`[Signal] Relaying video-answer from ${socket.id} to ${to}`);
-        io.to(to).emit('video-answer', { answer, from: socket.id });
+        let { answer, to, targetUid } = data;
+
+        if (!targetUid && socket.user?.uid) {
+            targetUid = sessionService.getOpponentUid(socket.user.uid);
+        }
+
+        if (targetUid) {
+            console.log(`[Signal] Relaying video-answer from ${socket.id} to user ${targetUid}`);
+            const sockets = sessionService.getSocketIdsForUser(targetUid);
+            sockets.forEach(sid => {
+                io.to(sid).emit('video-answer', { answer, from: socket.id });
+            });
+        } else {
+            console.log(`[Signal] Relaying video-answer from ${socket.id} to ${to} (Fallback)`);
+            io.to(to).emit('video-answer', { answer, from: socket.id });
+        }
     });
 
     socket.on('video-ice-candidate', (data: any) => {
-        const { candidate, to } = data;
-        console.log(`[Signal] Relaying video-ice-candidate from ${socket.id} to ${to}`);
-        io.to(to).emit('video-ice-candidate', { candidate, from: socket.id });
+        let { candidate, to, targetUid } = data;
+
+        if (!targetUid && socket.user?.uid) {
+            targetUid = sessionService.getOpponentUid(socket.user.uid);
+        }
+
+        if (targetUid) {
+            const sockets = sessionService.getSocketIdsForUser(targetUid);
+            sockets.forEach(sid => {
+                io.to(sid).emit('video-ice-candidate', { candidate, from: socket.id });
+            });
+        } else {
+            console.log(`[Signal] Relaying video-ice-candidate from ${socket.id} to ${to}`);
+            io.to(to).emit('video-ice-candidate', { candidate, from: socket.id });
+        }
     });
 
     // Friend Invite System
@@ -259,7 +321,8 @@ io.on('connection', (socket: any) => {
             sessionService.createRoom(
                 { uid: inviterUid, socketId: inviterSocketId },
                 { uid: socket.user.uid, socketId: socket.id },
-                io
+                io,
+                'video'
             );
         } else {
             socket.emit('invite_error', { message: 'Inviter is no longer online' });

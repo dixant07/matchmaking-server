@@ -116,7 +116,8 @@ class QueueService {
             sessionService.createRoom(
                 { uid: user1.uid, socketId: user1.socketId },
                 { uid: user2.uid, socketId: user2.socketId },
-                io
+                io,
+                user1.mode // Assuming matches share mode or prioritizing p1
             );
         } else {
             console.error("[Queue] Could not access IO server to create room");
