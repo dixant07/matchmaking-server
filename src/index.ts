@@ -171,6 +171,7 @@ io.on('connection', (socket: any) => {
     // WebRTC Signaling
     socket.on('offer', (data: any) => {
         let { offer, to, targetUid } = data;
+        console.log(`[Signal] Received 'offer' from ${socket.id} -> ${to} (UID: ${targetUid})`);
 
         // Loopback Prevention
         if (targetUid === socket.user?.uid) {
@@ -179,10 +180,12 @@ io.on('connection', (socket: any) => {
         }
 
         // [FIX] Prioritize Direct Socket Routing
-        // If we have the specific socket ID of the opponent (from match_found event), use it.
-        // It is the most reliable way to reach the exact tab/device matched.
         if (to) {
-            // console.log(`[Signal] Direct offer from ${socket.id} to ${to}`);
+            console.log(`[Signal] Direct offer routing: ${socket.id} -> ${to}`);
+            const targetSocket = io.sockets.sockets.get(to);
+            if (!targetSocket) {
+                console.warn(`[Signal] WARNING: Target socket ${to} not found in local registry! Routing might fail if not clustered.`);
+            }
             io.to(to).emit('offer', { offer, from: socket.id, fromUid: socket.user.uid });
             return;
         }
@@ -196,23 +199,27 @@ io.on('connection', (socket: any) => {
         if (targetUid) {
             const sockets = sessionService.getSocketIdsForUser(targetUid);
             if (sockets.length > 0) {
-                console.log(`[Signal] Relaying offer from ${socket.id} to user ${targetUid}`);
+                console.log(`[Signal] Relaying offer from ${socket.id} to user ${targetUid} (Sockets: ${sockets.join(', ')})`);
                 sockets.forEach(sid => {
                     io.to(sid).emit('offer', { offer, from: socket.id, fromUid: socket.user.uid });
                 });
             } else {
                 console.warn(`[Signal] Warning: No active sockets found for target user ${targetUid}.`);
             }
+        } else {
+            console.warn(`[Signal] Failed to route offer! No 'to' and no 'targetUid'.`);
         }
     });
 
     socket.on('answer', (data: any) => {
         let { answer, to, targetUid } = data;
+        console.log(`[Signal] Received 'answer' from ${socket.id} -> ${to}`);
 
         if (targetUid === socket.user?.uid) return;
 
         // [FIX] Prioritize Direct Socket Routing
         if (to) {
+            console.log(`[Signal] Direct answer routing: ${socket.id} -> ${to}`);
             io.to(to).emit('answer', { answer, from: socket.id });
             return;
         }
@@ -236,6 +243,7 @@ io.on('connection', (socket: any) => {
 
     socket.on('ice-candidate', (data: any) => {
         let { candidate, to, targetUid } = data;
+        // console.log(`[Signal] ICE candidate from ${socket.id} -> ${to}`);
 
         if (targetUid === socket.user?.uid) return;
 
