@@ -170,6 +170,9 @@ io.on('connection', (socket: any) => {
     // WebRTC Signaling
     // WebRTC Signaling
     socket.on('offer', (data: any) => {
+        // [DEBUG] Log full payload to check for targetUid presence
+        console.log(`[Signal] 'offer' payload:`, JSON.stringify(data));
+
         let { offer, to, targetUid } = data;
         console.log(`[Signal] Received 'offer' from ${socket.id} -> ${to} (UID: ${targetUid})`);
 
@@ -214,6 +217,9 @@ io.on('connection', (socket: any) => {
     });
 
     socket.on('answer', (data: any) => {
+        // [DEBUG] Log full payload
+        console.log(`[Signal] 'answer' payload:`, JSON.stringify(data));
+
         let { answer, to, targetUid } = data;
         console.log(`[Signal] Received 'answer' from ${socket.id} -> ${to}`);
 
@@ -245,6 +251,8 @@ io.on('connection', (socket: any) => {
             } else {
                 console.warn(`[Signal] Warning: No active sockets found for target user ${targetUid} during answer.`);
             }
+        } else {
+            console.warn(`[Signal] Failed to route answer! No 'to' and no 'targetUid'.`);
         }
     });
 
