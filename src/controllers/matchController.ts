@@ -6,6 +6,12 @@ import { sessionService } from '../services/SessionService';
 export const joinQueue = async (socket: any, data: any) => {
     const { mode, preferences } = data;
     const uid = socket.user.uid; // Trusted UID from middleware
+    if (!uid) {
+        console.error(`[Match] Socket ${socket.id} has no UID. Cannot join queue.`);
+        socket.emit('error', { message: 'Authentication error: Missing UID' });
+        return;
+    }
+
     console.log(`[Match] User ${uid} attempting to join queue via socket ${socket.id}`);
 
     // Check if user is banned

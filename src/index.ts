@@ -184,18 +184,23 @@ io.on('connection', (socket: any) => {
             if (targetUid) console.log(`[Signal] Resolved opponent UID for offer: ${targetUid}`);
         }
 
+        let sent = false;
+
+        // 1. Try sending to targetUid (Precise routing)
         if (targetUid) {
             const sockets = sessionService.getSocketIdsForUser(targetUid);
-            console.log(`[Signal] Relaying offer from ${socket.id} to user ${targetUid} (sockets: ${sockets.length})`);
-
-            if (sockets.length === 0) {
-                console.warn(`[Signal] Warning: No active sockets found for target user ${targetUid}`);
+            if (sockets.length > 0) {
+                console.log(`[Signal] Relaying offer from ${socket.id} to user ${targetUid}`);
+                sockets.forEach(sid => {
+                    io.to(sid).emit('offer', { offer, from: socket.id, fromUid: socket.user.uid });
+                });
+                sent = true;
+            } else {
+                console.warn(`[Signal] Warning: No active sockets found for target user ${targetUid}. Trying fallback...`);
             }
-
-            sockets.forEach(sid => {
-                io.to(sid).emit('offer', { offer, from: socket.id, fromUid: socket.user.uid });
-            });
-        } else {
+        }
+        // 2. Fallback: Send to 'to' Socket ID if UID routing failed or wasn't possible
+        if (!sent && to) {
             console.log(`[Signal] Relaying offer from ${socket.id} to socket ${to} (Fallback)`);
             io.to(to).emit('offer', { offer, from: socket.id, fromUid: socket.user.uid });
         }
@@ -211,14 +216,21 @@ io.on('connection', (socket: any) => {
             if (targetUid) console.log(`[Signal] Resolved opponent UID for answer: ${targetUid}`);
         }
 
+        let sent = false;
+
         if (targetUid) {
             const sockets = sessionService.getSocketIdsForUser(targetUid);
-            console.log(`[Signal] Relaying answer from ${socket.id} to user ${targetUid}`);
-            sockets.forEach(sid => {
-                io.to(sid).emit('answer', { answer, from: socket.id });
-            });
-        } else {
-            console.log(`[Signal] Relaying answer from ${socket.id} to ${to} (Fallback)`);
+            if (sockets.length > 0) {
+                sockets.forEach(sid => {
+                    io.to(sid).emit('answer', { answer, from: socket.id });
+                });
+                sent = true;
+            } else {
+                console.warn(`[Signal] Warning: No active sockets found for target user ${targetUid}. Trying fallback...`);
+            }
+        }
+
+        if (!sent && to) {
             io.to(to).emit('answer', { answer, from: socket.id });
         }
     });
@@ -232,12 +244,19 @@ io.on('connection', (socket: any) => {
             targetUid = sessionService.getOpponentUid(socket.user.uid);
         }
 
+        let sent = false;
+
         if (targetUid) {
             const sockets = sessionService.getSocketIdsForUser(targetUid);
-            sockets.forEach(sid => {
-                io.to(sid).emit('ice-candidate', { candidate, from: socket.id });
-            });
-        } else {
+            if (sockets.length > 0) {
+                sockets.forEach(sid => {
+                    io.to(sid).emit('ice-candidate', { candidate, from: socket.id });
+                });
+                sent = true;
+            }
+        }
+
+        if (!sent && to) {
             io.to(to).emit('ice-candidate', { candidate, from: socket.id });
         }
     });
