@@ -142,6 +142,7 @@ io.on('connection', (socket: any) => {
     // Handle connection_stable
     socket.on('connection_stable', (data: any) => {
         const { roomId, service } = data;
+        console.log(`[Session] Received 'connection_stable' from ${socket.id} (UID: ${socket.user?.uid}) for ${service} in ${roomId}`);
         sessionService.handleConnectionStable(socket, roomId, service);
     });
 
