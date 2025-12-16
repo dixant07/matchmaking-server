@@ -119,10 +119,15 @@ class SessionService {
     public createRoom(userA: { uid: string; socketId: string }, userB: { uid: string; socketId: string }, io: Server, mode: 'random' | 'video' = 'random') {
         const roomId = `room_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
+        console.log(`[Session] Creating room ${roomId} for UIDs: A=${userA.uid}, B=${userB.uid}`);
+        console.log(`[Session] Input Socket IDs (from Queue): A=${userA.socketId}, B=${userB.socketId}`);
+
         // [FIX] Validate that both users ACTUALLY have active sockets registered in SessionService
         // This prevents race conditions where QueueService matches a user who just disconnected
         const socketA = this.uidToSocket.get(userA.uid);
         const socketB = this.uidToSocket.get(userB.uid);
+
+        console.log(`[Session] Fresh Socket Lookup: A=${socketA}, B=${socketB}`);
 
         if (!socketA || !socketB) {
             console.warn(`[Session] Aborting match ${roomId}. One or both users are no longer active.`);
@@ -133,6 +138,9 @@ class SessionService {
             // For now, silent abort is safer than creating a broken room.
             return;
         }
+
+        if (socketA !== userA.socketId) console.warn(`[Session] User A socket changed! Queue: ${userA.socketId} -> Fresh: ${socketA}`);
+        if (socketB !== userB.socketId) console.warn(`[Session] User B socket changed! Queue: ${userB.socketId} -> Fresh: ${socketB}`);
 
         // Use the FRESHLY looked up socket IDs to be 100% sure
         userA.socketId = socketA;
