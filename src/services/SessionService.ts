@@ -120,10 +120,9 @@ class SessionService {
         const roomId = `room_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
         console.log(`[Session] Creating room ${roomId} for UIDs: A=${userA.uid}, B=${userB.uid}`);
-        console.log(`[Session] Input Socket IDs (from Queue): A=${userA.socketId}, B=${userB.socketId}`);
+        console.log(`[Session] Input Socket IDs: A=${userA.socketId}, B=${userB.socketId}`);
 
         // [FIX] Validate that both users ACTUALLY have active sockets registered in SessionService
-        // This prevents race conditions where QueueService matches a user who just disconnected
         const socketA = this.uidToSocket.get(userA.uid);
         const socketB = this.uidToSocket.get(userB.uid);
 
@@ -133,16 +132,13 @@ class SessionService {
             console.warn(`[Session] Aborting match ${roomId}. One or both users are no longer active.`);
             if (!socketA) console.warn(`[Session] User A (${userA.uid}) is missing socket.`);
             if (!socketB) console.warn(`[Session] User B (${userB.uid}) is missing socket.`);
-
-            // Optional: Notify the survivor that match failed? 
-            // For now, silent abort is safer than creating a broken room.
             return;
         }
 
         if (socketA !== userA.socketId) console.warn(`[Session] User A socket changed! Queue: ${userA.socketId} -> Fresh: ${socketA}`);
         if (socketB !== userB.socketId) console.warn(`[Session] User B socket changed! Queue: ${userB.socketId} -> Fresh: ${socketB}`);
 
-        // Use the FRESHLY looked up socket IDs to be 100% sure
+        // Use the FRESHLY looked up socket IDs
         userA.socketId = socketA;
         userB.socketId = socketB;
 
@@ -167,8 +163,8 @@ class SessionService {
         io.to(userA.socketId).emit('match_found', {
             roomId,
             role: "A",
-            opponentId: userB.socketId, // socketId for WebRTC signaling
-            opponentUid: userB.uid, // uid for game logic
+            opponentId: userB.socketId, // Send current socket for WebRTC
+            opponentUid: userB.uid, // Send UID for game logic & persistence
             isInitiator: true,
             iceServers: buildIceServersForUser(userA.uid)
         });
@@ -177,8 +173,8 @@ class SessionService {
         io.to(userB.socketId).emit('match_found', {
             roomId,
             role: "B",
-            opponentId: userA.socketId, // socketId for WebRTC signaling
-            opponentUid: userA.uid, // uid for game logic
+            opponentId: userA.socketId,
+            opponentUid: userA.uid,
             isInitiator: false,
             iceServers: buildIceServersForUser(userB.uid)
         });
@@ -215,9 +211,7 @@ class SessionService {
             console.log(`[Session] Clearing stale session for ${uid} (was with ${session.opponentId})`);
             this.sessionCache.delete(uid);
 
-            // Optional: Clean up the opponent's session too so they don't think they are still connected
-            // But be careful not to break their potential reconnect if this was a mistake. 
-            // Usually, if one sides clears, the session is dead.
+            // Also clear opponent's session to keep state consistent
             if (this.sessionCache.has(session.opponentId)) {
                 this.sessionCache.delete(session.opponentId);
             }
@@ -230,7 +224,8 @@ class SessionService {
 
         console.log(`[Session] Room ${roomId} fully established. Caching session.`);
 
-        // Store in Session Cache
+        // Store in Session Cache with UID reference
+        // Note: opponentId here effectively stores the UID now based on usages logic
         this.sessionCache.set(room.playerA.uid, { roomId, opponentId: room.playerB.uid, role: 'A' });
         this.sessionCache.set(room.playerB.uid, { roomId, opponentId: room.playerA.uid, role: 'B' });
 
@@ -239,7 +234,6 @@ class SessionService {
             io.to(player.socketId).emit('session_established', { roomId });
         });
 
-        // We keep it in sessionCache, remove from activeRooms
         this.activeRooms.delete(roomId);
     }
 
@@ -255,7 +249,6 @@ class SessionService {
 
             console.log(`[Session] User ${uid} disconnected.`);
         }
-        // Note: We don't remove from sessionCache immediately to allow reconnection
     }
 
     public handleReconnection(socket: Socket, uid: string) {
@@ -266,27 +259,29 @@ class SessionService {
             const session = this.sessionCache.get(uid)!;
             console.log(`[Session] User ${uid} resuming active session in ${session.roomId}`);
 
+            // [FIX] Dynamic Socket Lookup for Opponent
+            // Do NOT rely on any stored socket ID. Always get fresh one.
+            const opponentUid = session.opponentId; // This is actually UID in our logic
+            const opponentSockets = this.getSocketIdsForUser(opponentUid);
+            const opponentSocketId = opponentSockets.length > 0 ? opponentSockets[0] : null;
+
             socket.emit('match_found', {
                 roomId: session.roomId,
                 role: session.role,
-                opponentId: session.opponentId,
+                opponentId: opponentSocketId, // Send FRESH socket ID (or null if offline)
+                opponentUid: opponentUid,
                 isInitiator: session.role === 'A',
                 iceServers: buildIceServersForUser(uid),
                 isReconnection: true
             });
 
-            // [FIX] Notify THE OPPONENT that I am back
-            // This ensures they are ready to receive my new Video Offer
-            const opponentSockets = this.getSocketIdsForUser(session.opponentId);
-            opponentSockets.forEach(sid => {
-                // We send a specific event or just 'user_reconnected'
-                // But for simplicity, we can just trigger them to expect a new offer
-                // or technically, we don't need to send anything IF the "Offer" arrives correctly.
-                // However, updating their UI is helpful.
-                socket.to(sid).emit('opponent_reconnected', {
-                    message: 'Opponent is back online'
+            // Notify Opponent that I am back (so they can update their target socket for me)
+            if (opponentSocketId) {
+                socket.to(opponentSocketId).emit('opponent_reconnected', {
+                    message: 'Opponent is back online',
+                    opponentSocketId: socket.id // Give them MY new socket ID
                 });
-            });
+            }
 
             restored = true;
         }
@@ -307,10 +302,14 @@ class SessionService {
                     else room.playerB.socketId = socket.id;
                     this.registerSocket(socket.id, uid);
 
+                    // [FIX] Dynamic Socket Lookup here too
+                    const freshOpponentSockets = this.getSocketIdsForUser(opponent.uid);
+                    const freshOpponentSocketId = freshOpponentSockets.length > 0 ? freshOpponentSockets[0] : null;
+
                     socket.emit('match_found', {
                         roomId,
                         role,
-                        opponentId: opponent.socketId,
+                        opponentId: freshOpponentSocketId,
                         opponentUid: opponent.uid,
                         isInitiator: isPlayerA,
                         iceServers: buildIceServersForUser(uid),

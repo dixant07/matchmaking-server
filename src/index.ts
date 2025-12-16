@@ -179,18 +179,20 @@ io.on('connection', (socket: any) => {
             return;
         }
 
-        // [FIX] Prioritize Direct Socket Routing
+        // [FIX] Validated Direct Routing
+        // We trust 'to' (Socket ID) if provided, but we verify it exists to avoid dead-end emits
         if (to) {
-            console.log(`[Signal] Direct offer routing: ${socket.id} -> ${to}`);
             const targetSocket = io.sockets.sockets.get(to);
-            if (!targetSocket) {
-                console.warn(`[Signal] WARNING: Target socket ${to} not found in local registry! Routing might fail if not clustered.`);
+            if (targetSocket) {
+                console.log(`[Signal] Direct offer routing: ${socket.id} -> ${to}`);
+                io.to(to).emit('offer', { offer, from: socket.id, fromUid: socket.user.uid });
+                return;
+            } else {
+                console.warn(`[Signal] Target socket ${to} is dead/missing. Falling back to UID lookup.`);
             }
-            io.to(to).emit('offer', { offer, from: socket.id, fromUid: socket.user.uid });
-            return;
         }
 
-        // Fallback: If no targetUid, find opponent associated with this socket's user
+        // Fallback: Resolve via UID
         if (!targetUid && socket.user?.uid) {
             targetUid = sessionService.getOpponentUid(socket.user.uid);
             if (targetUid) console.log(`[Signal] Resolved opponent UID for offer: ${targetUid}`);
@@ -217,11 +219,16 @@ io.on('connection', (socket: any) => {
 
         if (targetUid === socket.user?.uid) return;
 
-        // [FIX] Prioritize Direct Socket Routing
+        // [FIX] Validated Direct Routing
         if (to) {
-            console.log(`[Signal] Direct answer routing: ${socket.id} -> ${to}`);
-            io.to(to).emit('answer', { answer, from: socket.id });
-            return;
+            const targetSocket = io.sockets.sockets.get(to);
+            if (targetSocket) {
+                console.log(`[Signal] Direct answer routing: ${socket.id} -> ${to}`);
+                io.to(to).emit('answer', { answer, from: socket.id });
+                return;
+            } else {
+                console.warn(`[Signal] Target socket ${to} is dead/missing. Falling back to UID lookup.`);
+            }
         }
 
         if (!targetUid && socket.user?.uid) {
