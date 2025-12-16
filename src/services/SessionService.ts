@@ -119,6 +119,25 @@ class SessionService {
     public createRoom(userA: { uid: string; socketId: string }, userB: { uid: string; socketId: string }, io: Server, mode: 'random' | 'video' = 'random') {
         const roomId = `room_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
+        // [FIX] Validate that both users ACTUALLY have active sockets registered in SessionService
+        // This prevents race conditions where QueueService matches a user who just disconnected
+        const socketA = this.uidToSocket.get(userA.uid);
+        const socketB = this.uidToSocket.get(userB.uid);
+
+        if (!socketA || !socketB) {
+            console.warn(`[Session] Aborting match ${roomId}. One or both users are no longer active.`);
+            if (!socketA) console.warn(`[Session] User A (${userA.uid}) is missing socket.`);
+            if (!socketB) console.warn(`[Session] User B (${userB.uid}) is missing socket.`);
+
+            // Optional: Notify the survivor that match failed? 
+            // For now, silent abort is safer than creating a broken room.
+            return;
+        }
+
+        // Use the FRESHLY looked up socket IDs to be 100% sure
+        userA.socketId = socketA;
+        userB.socketId = socketB;
+
         const expectedServices = ['game'];
         if (mode === 'video') {
             expectedServices.push('video');

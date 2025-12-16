@@ -178,15 +178,21 @@ io.on('connection', (socket: any) => {
             return;
         }
 
+        // [FIX] Prioritize Direct Socket Routing
+        // If we have the specific socket ID of the opponent (from match_found event), use it.
+        // It is the most reliable way to reach the exact tab/device matched.
+        if (to) {
+            // console.log(`[Signal] Direct offer from ${socket.id} to ${to}`);
+            io.to(to).emit('offer', { offer, from: socket.id, fromUid: socket.user.uid });
+            return;
+        }
+
         // Fallback: If no targetUid, find opponent associated with this socket's user
         if (!targetUid && socket.user?.uid) {
             targetUid = sessionService.getOpponentUid(socket.user.uid);
             if (targetUid) console.log(`[Signal] Resolved opponent UID for offer: ${targetUid}`);
         }
 
-        let sent = false;
-
-        // 1. Try sending to targetUid (Precise routing)
         if (targetUid) {
             const sockets = sessionService.getSocketIdsForUser(targetUid);
             if (sockets.length > 0) {
@@ -194,15 +200,9 @@ io.on('connection', (socket: any) => {
                 sockets.forEach(sid => {
                     io.to(sid).emit('offer', { offer, from: socket.id, fromUid: socket.user.uid });
                 });
-                sent = true;
             } else {
-                console.warn(`[Signal] Warning: No active sockets found for target user ${targetUid}. Trying fallback...`);
+                console.warn(`[Signal] Warning: No active sockets found for target user ${targetUid}.`);
             }
-        }
-        // 2. Fallback: Send to 'to' Socket ID if UID routing failed or wasn't possible
-        if (!sent && to) {
-            console.log(`[Signal] Relaying offer from ${socket.id} to socket ${to} (Fallback)`);
-            io.to(to).emit('offer', { offer, from: socket.id, fromUid: socket.user.uid });
         }
     });
 
@@ -211,12 +211,16 @@ io.on('connection', (socket: any) => {
 
         if (targetUid === socket.user?.uid) return;
 
+        // [FIX] Prioritize Direct Socket Routing
+        if (to) {
+            io.to(to).emit('answer', { answer, from: socket.id });
+            return;
+        }
+
         if (!targetUid && socket.user?.uid) {
             targetUid = sessionService.getOpponentUid(socket.user.uid);
             if (targetUid) console.log(`[Signal] Resolved opponent UID for answer: ${targetUid}`);
         }
-
-        let sent = false;
 
         if (targetUid) {
             const sockets = sessionService.getSocketIdsForUser(targetUid);
@@ -224,14 +228,9 @@ io.on('connection', (socket: any) => {
                 sockets.forEach(sid => {
                     io.to(sid).emit('answer', { answer, from: socket.id });
                 });
-                sent = true;
             } else {
-                console.warn(`[Signal] Warning: No active sockets found for target user ${targetUid}. Trying fallback...`);
+                console.warn(`[Signal] Warning: No active sockets found for target user ${targetUid} during answer.`);
             }
-        }
-
-        if (!sent && to) {
-            io.to(to).emit('answer', { answer, from: socket.id });
         }
     });
 
@@ -240,11 +239,15 @@ io.on('connection', (socket: any) => {
 
         if (targetUid === socket.user?.uid) return;
 
+        // [FIX] Prioritize Direct Socket Routing
+        if (to) {
+            io.to(to).emit('ice-candidate', { candidate, from: socket.id });
+            return;
+        }
+
         if (!targetUid && socket.user?.uid) {
             targetUid = sessionService.getOpponentUid(socket.user.uid);
         }
-
-        let sent = false;
 
         if (targetUid) {
             const sockets = sessionService.getSocketIdsForUser(targetUid);
@@ -252,12 +255,7 @@ io.on('connection', (socket: any) => {
                 sockets.forEach(sid => {
                     io.to(sid).emit('ice-candidate', { candidate, from: socket.id });
                 });
-                sent = true;
             }
-        }
-
-        if (!sent && to) {
-            io.to(to).emit('ice-candidate', { candidate, from: socket.id });
         }
     });
 
