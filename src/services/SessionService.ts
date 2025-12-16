@@ -100,19 +100,38 @@ class SessionService {
     }
 
     public registerSocket(socketId: string, uid: string) {
+        console.log(`[Session] Registering socket ${socketId} for UID ${uid}`);
         this.socketToUid.set(socketId, uid);
 
         // Enforce 1 User = 1 Socket. Overwrite any existing socket.
         const existingSocket = this.uidToSocket.get(uid);
-        if (existingSocket && existingSocket !== socketId) {
-            console.log(`[Session] User ${uid} new connection. Overwriting old socket ${existingSocket}`);
-            // Note: We don't necessarily disconnect the old socket here, but we stop tracking it.
+        if (existingSocket) {
+            if (existingSocket !== socketId) {
+                console.log(`[Session] User ${uid} new connection. Overwriting old socket ${existingSocket}`);
+            } else {
+                console.log(`[Session] User ${uid} re-registered same socket ${socketId}`);
+            }
         }
         this.uidToSocket.set(uid, socketId);
+        console.log(`[Session] uidToSocket set for ${uid}. Map size: ${this.uidToSocket.size}`);
     }
 
     public getSocketIdsForUser(uid: string): string[] {
         const socketId = this.uidToSocket.get(uid);
+        if (!socketId) {
+            // [DEBUG] Deep inspection on failure
+            console.warn(`[Session] Lookup failed for ${uid}. Map size: ${this.uidToSocket.size}`);
+            // Check if it exists with whitespace issues?
+            for (const key of this.uidToSocket.keys()) {
+                if (key.includes(uid) || uid.includes(key)) {
+                    console.warn(`[Session] PARTIAL MATCH FOUND: '${key}' vs '${uid}' (Len: ${key.length} vs ${uid.length})`);
+                }
+            }
+            // Optional: Dump first 5 keys to see format
+            // console.log('Keys dump:', [...this.uidToSocket.keys()].slice(0,5));
+        } else {
+            console.log(`[Session] Lookup success for ${uid} -> ${socketId}`);
+        }
         return socketId ? [socketId] : [];
     }
 
@@ -240,14 +259,22 @@ class SessionService {
     public handleDisconnect(socketId: string) {
         const uid = this.socketToUid.get(socketId);
         if (uid) {
+            console.log(`[Session] Handle Disconnect: Socket ${socketId} belonged to ${uid}`);
             this.socketToUid.delete(socketId);
 
-            const userSocket = this.uidToSocket.get(uid);
-            if (userSocket === socketId) {
+            const currentActiveSocket = this.uidToSocket.get(uid);
+            console.log(`[Session] Current active socket for ${uid} is ${currentActiveSocket}`);
+
+            if (currentActiveSocket === socketId) {
                 this.uidToSocket.delete(uid);
+                console.log(`[Session] Removed UID ${uid} from registry (Clean disconnect).`);
+            } else {
+                console.log(`[Session] DID NOT remove UID ${uid}. Active socket ${currentActiveSocket} != Disconnected ${socketId}`);
             }
 
-            console.log(`[Session] User ${uid} disconnected.`);
+            console.log(`[Session] User ${uid} disconnected logic complete.`);
+        } else {
+            console.log(`[Session] Handle Disconnect: Socket ${socketId} had no mapped UID.`);
         }
     }
 
