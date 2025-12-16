@@ -65,11 +65,7 @@ io.use(async (socket: any, next) => {
     const serverKey = socket.handshake.auth.serverKey;
 
     // Check for admin server connection
-    if (userId === 'server-admin' && serverKey === ADMIN_SERVER_KEY) {
-        console.log(`[Auth] Admin server connected`);
-        socket.user = { uid: 'server-admin', isAdmin: true };
-        return next();
-    }
+
 
     // Check for explicit userId or token
     const effectiveUid = userId || token;
