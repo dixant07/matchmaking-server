@@ -1,7 +1,7 @@
 node_modules/
 dist/
 .env
-!.env.example
+.env.example
 
 # Firebase Admin SDK service account files (contain secrets)
 *-firebase-adminsdk-*.json

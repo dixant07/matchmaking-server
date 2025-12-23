@@ -1,75 +1,97 @@
 import admin from 'firebase-admin';
-import dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as path from 'path';
 
-dotenv.config();
+// Server-side Firebase Admin SDK initialization
+// This file should only be imported in API routes (server-side)
 
-if (!admin.apps.length) {
+// Variables replaced by lazy-loaded Proxies below
+
+function initializeFirebaseAdmin() {
+    if (admin.apps.length > 0) {
+        return;
+    }
+
     let credential;
-    let credentialSource = '';
 
-    // Priority 1: Try to load from base64-encoded environment variable
-    const base64ServiceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
-
-    if (base64ServiceAccountKey) {
+    // Priority 1: Load from FIREBASE_SERVICE_ACCOUNT_KEY env var (Base64 encoded JSON)
+    // This is the recommended approach for production deployments
+    if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
         try {
-            console.log('[Firebase] Attempting to decode FIREBASE_SERVICE_ACCOUNT_KEY from base64...');
-            const decodedKey = Buffer.from(base64ServiceAccountKey, 'base64').toString('utf-8');
-            const serviceAccount = JSON.parse(decodedKey);
+            console.log('[Firebase Admin] Loading credentials from FIREBASE_SERVICE_ACCOUNT_KEY env var');
+            const serviceAccountJson = Buffer.from(
+                process.env.FIREBASE_SERVICE_ACCOUNT_KEY,
+                'base64'
+            ).toString('utf8');
+            const serviceAccount = JSON.parse(serviceAccountJson);
             credential = admin.credential.cert(serviceAccount);
-            credentialSource = 'FIREBASE_SERVICE_ACCOUNT_KEY (base64 env var)';
-            console.log('[Firebase] Successfully loaded credentials from base64 environment variable');
         } catch (error) {
-            console.error('[Firebase] Failed to decode/parse FIREBASE_SERVICE_ACCOUNT_KEY:', error);
-            console.log('[Firebase] Falling back to file-based credentials...');
+            console.error('[Firebase Admin] Failed to parse FIREBASE_SERVICE_ACCOUNT_KEY:', error);
+            throw new Error('Invalid FIREBASE_SERVICE_ACCOUNT_KEY - must be valid Base64 encoded JSON');
         }
     }
 
-    // Priority 2: Try to load service account key from file
-    if (!credential) {
-        const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS ||
-            path.join(__dirname, '../../oreo-video-app-v1-firebase-adminsdk-fbsvc-751f63dcd0.json');
+    if (admin.apps.length === 0) {
+        if (credential) {
+            try {
+                const serviceAccount = credential as any;
+                console.log('✅ Firebase Admin Initialized with Token Access');
+                // Attempt to safely log the project ID if available in the credential object
+                const credProjectId = serviceAccount?.projectId || serviceAccount?.project_id || 'unknown';
+                console.log('🔑 Credential Project ID:', credProjectId);
 
-        if (fs.existsSync(serviceAccountPath)) {
-            console.log(`[Firebase] Loading credentials from file: ${serviceAccountPath}`);
-            const serviceAccount = require(serviceAccountPath);
-            credential = admin.credential.cert(serviceAccount);
-            credentialSource = `File: ${serviceAccountPath}`;
+                admin.initializeApp({
+                    credential: credential,
+                    projectId: credProjectId
+                });
+                console.log('✅ Firebase Admin Initialized Successfully');
+                console.log('Project ID:', admin.app().options.projectId);
+            } catch (e) {
+                console.error('Error during admin.initializeApp:', e);
+            }
         } else {
-            console.log('[Firebase] No service account key file found.');
-            console.log(`[Firebase] Checked path: ${serviceAccountPath}`);
+            // If no credentials (e.g. during build where secrets aren't available), 
+            // skip initialization to prevent build crash.
+            // If no credentials found, try Application Default Credentials (ADC)
+            // This is required for Cloud Run / App Engine / Cloud Functions
+            try {
+                admin.initializeApp({
+                    projectId: process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT || 'rumi-live',
+                    credential: admin.credential.applicationDefault()
+                });
+                console.log('✅ Firebase Admin Initialized with ADC');
+            } catch (e) {
+                console.warn('[Firebase Admin] Skipping initialization: No credentials found (build step) and ADC failed.', e);
+            }
         }
     }
-
-    // Priority 3: Try application default credentials
-    if (!credential) {
-        console.log('[Firebase] Attempting to use application default credentials...');
-        try {
-            credential = admin.credential.applicationDefault();
-            credentialSource = 'Application Default Credentials';
-        } catch (error) {
-            console.error('\n❌ FIREBASE INITIALIZATION FAILED ❌');
-            console.error('Could not load Firebase credentials.');
-            console.error('\nPlease do ONE of the following:');
-            console.error('1. Set FIREBASE_SERVICE_ACCOUNT_KEY with base64-encoded service account JSON');
-            console.error('2. Download service account key from Firebase Console and save it');
-            console.error('3. Set GOOGLE_APPLICATION_CREDENTIALS environment variable');
-            console.error('4. Run on Google Cloud Platform with default credentials\n');
-            throw error;
-        }
-    }
-
-    admin.initializeApp({
-        credential: credential,
-        projectId: process.env.FIREBASE_PROJECT_ID || 'oreo-video-app-v1'
-    });
-
-    console.log(`[Firebase] Credential source: ${credentialSource}`);
 }
 
-export const db = admin.firestore();
-export const auth = admin.auth();
+// Initialize on first import
+initializeFirebaseAdmin();
 
-console.log('✅ Firebase Admin Initialized for Matchmaking Server');
-console.log('[Firebase] Project ID:', admin.app().options.projectId);
+import { getFirestore } from 'firebase-admin/firestore';
+
+const db = new Proxy({} as admin.firestore.Firestore, {
+    get: (_target, prop) => {
+        initializeFirebaseAdmin();
+        if (!admin.apps.length) {
+            throw new Error('Firebase Admin not initialized. Ensure FIREBASE_SERVICE_ACCOUNT_KEY is set.');
+        }
+        // Explicitly use named database "default" (no parens)
+        // Standard admin.firestore() defaults to "(default)" which leads to 5 NOT_FOUND
+        return Reflect.get(getFirestore(admin.app(), 'default'), prop);
+    }
+});
+
+const auth = new Proxy({} as admin.auth.Auth, {
+    get: (_target, prop) => {
+        initializeFirebaseAdmin();
+        if (!admin.apps.length) {
+            throw new Error('Firebase Admin not initialized. Ensure FIREBASE_SERVICE_ACCOUNT_KEY is set.');
+        }
+        return Reflect.get(admin.auth(), prop);
+    }
+});
+
+export { db, auth, admin };
