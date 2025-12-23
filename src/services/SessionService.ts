@@ -58,7 +58,7 @@ const generateTurnCredentials = (uid: string, turnUrl: string, turnSecret: strin
  * Generates fresh ephemeral credentials each time
  */
 const buildIceServersForUser = (uid: string) => {
-    const gameServers: IceServer[] = [...DEFAULT_STUN_SERVERS];
+    const gameServers: IceServer[] = [];
     const videoServers: IceServer[] = [...DEFAULT_STUN_SERVERS];
 
     // Add game TURN with ephemeral credentials if configured
