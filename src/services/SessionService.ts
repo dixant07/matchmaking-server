@@ -183,6 +183,12 @@ class SessionService {
 
         this.activeRooms.set(roomId, roomData);
 
+
+        const iceServersA = buildIceServersForUser(userA.uid);
+        const iceServersB = buildIceServersForUser(userB.uid);
+
+        console.log(`[Session] Emitting match_found for ${roomId}. ICE A: ${iceServersA.video.length} video servers, ICE B: ${iceServersB.video.length} video servers`);
+
         // Notify Player A
         io.to(userA.socketId).emit('match_found', {
             roomId,
@@ -190,7 +196,7 @@ class SessionService {
             opponentId: userB.socketId, // Send current socket for WebRTC
             opponentUid: userB.uid, // Send UID for game logic & persistence
             isInitiator: true,
-            iceServers: buildIceServersForUser(userA.uid)
+            iceServers: iceServersA
         });
 
         // Notify Player B
@@ -200,7 +206,7 @@ class SessionService {
             opponentId: userA.socketId,
             opponentUid: userA.uid,
             isInitiator: false,
-            iceServers: buildIceServersForUser(userB.uid)
+            iceServers: iceServersB
         });
 
         console.log(`[Session] Created ${roomId}: ${userA.uid} vs ${userB.uid}`);
