@@ -68,7 +68,12 @@ const buildIceServersForUser = (uid: string) => {
     if (gameTurnUrl && gameTurnSecret && gameTurnUrl.startsWith('turn')) {
         gameServers.push(generateTurnCredentials(uid, gameTurnUrl, gameTurnSecret));
         console.log(`[ICE] Generated ephemeral game TURN credentials for ${uid}`);
+    } else {
+        console.warn(`[ICE] Game TURN not configured. Falling back to STUN only.`);
     }
+
+    // Add STUN servers as backup for game
+    gameServers.push(...DEFAULT_STUN_SERVERS);
 
     // Add video TURN with ephemeral credentials if configured
     const videoTurnUrl = process.env.VIDEO_TURN_URL;
