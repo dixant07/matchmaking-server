@@ -24,8 +24,22 @@ class QueueService {
         female: [] as QueueUser[]
     };
 
+    private availableBots: { socketId: string, uid: string }[] = [];
+
     constructor() {
         // No internal interval - controlled by main loop
+    }
+
+    public registerBot(socketId: string, uid: string) {
+        if (!this.availableBots.find(b => b.socketId === socketId)) {
+            this.availableBots.push({ socketId, uid });
+            console.log(`[Queue] Bot registered: ${socketId} (UID: ${uid}). Total bots: ${this.availableBots.length}`);
+        }
+    }
+
+    public unregisterBot(socketId: string) {
+        this.availableBots = this.availableBots.filter(b => b.socketId !== socketId);
+        console.log(`[Queue] Bot unregistered: ${socketId}. Remaining bots: ${this.availableBots.length}`);
     }
 
     public async joinQueue(user: QueueUser, socket: any) {
@@ -121,6 +135,45 @@ class QueueService {
         return queue.findIndex(u => u.socketId === user.socketId) + 1;
     }
 
+    private matchWithBot(user: QueueUser, io: any) {
+        if (this.availableBots.length === 0) return;
+
+        // Pick a random bot
+        const botIndex = Math.floor(Math.random() * this.availableBots.length);
+        const bot = this.availableBots[botIndex];
+
+        // Remove bot from available pool
+        this.unregisterBot(bot.socketId);
+
+        // Create fake QueueUser for bot using REAL UID
+        const botUser: QueueUser = {
+            socketId: bot.socketId,
+            uid: bot.uid,
+            gender: 'male',
+            tier: 'FREE',
+            mode: user.mode,
+            preferences: {},
+            joinedAt: Date.now(),
+            widenStage: 0
+        };
+
+        console.log(`[Queue] Matching User ${user.uid} with Bot ${bot.socketId} (UID: ${bot.uid})`);
+        // Remove user from queue
+        this.removeFromQueue(user.socketId);
+
+        // Create room directly via SessionService
+        if (io) {
+            sessionService.createRoom(
+                { uid: user.uid, socketId: user.socketId },
+                { uid: botUser.uid, socketId: botUser.socketId },
+                io,
+                user.mode
+            );
+        }
+
+        this.updateStats(user.uid);
+    }
+
     private executeMatch(user1: QueueUser, user2: QueueUser, socket1: any) {
         // Remove both from queues
         this.removeFromQueue(user1.socketId);
@@ -159,7 +212,7 @@ class QueueService {
         }
     }
 
-    private processWidening() {
+    private processWidening(io: any) {
         const now = Date.now();
         const checkQueue = (queue: QueueUser[]) => {
             queue.forEach(user => {
@@ -179,6 +232,17 @@ class QueueService {
                         // console.log(`[Queue] Widening ${user.uid} to Stage 2 (Ignore Gender)`);
                     }
                 }
+
+                // Stage 3: Bot Match (after 30s)
+                if (waitingTime > 30000 && this.availableBots.length > 0) {
+                    // console.log(`[Queue] User ${user.uid} waiting > 30s. Matching with Bot.`);
+                    this.matchWithBot(user, io);
+                    // Since matchWithBot removes them from queue, we should probably stop iterating or be careful?
+                    // forEach continues... but matchWithBot modified queue indirectly?
+                    // No, `this.removeFromQueue` modifies `this.queues.male`.
+                    // We are iterating a reference passed in `checkQueue`.
+                    // Safe enough for this pass, next pass they will be gone.
+                }
             });
         };
 
@@ -189,7 +253,7 @@ class QueueService {
     // Helper to inject IO for widening matches if needed
     public processMatches(io: any) {
         // Run widening first to ensure eligible users can be matched immediately
-        this.processWidening();
+        this.processWidening(io);
 
         [...this.queues.male, ...this.queues.female].forEach(user => {
             // Check if user was removed by a previous iteration in this very loop

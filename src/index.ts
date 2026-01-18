@@ -101,9 +101,10 @@ io.on('connection', (socket: any) => {
     // Handle disconnect
     socket.on('disconnect', async () => {
         removeFromQueue(socket.id);
+        queueService.unregisterBot(socket.id);
         sessionService.handleDisconnect(socket.id);
 
-        if (socket.user && socket.user.uid) {
+        if (socket.user && socket.user.uid && !socket.user.uid.startsWith('bot_')) {
             try {
                 const { db } = await import('./config/firebase');
                 const admin = await import('firebase-admin');
@@ -121,19 +122,21 @@ io.on('connection', (socket: any) => {
     if (socket.user && socket.user.uid) {
         sessionService.registerSocket(socket.id, socket.user.uid);
 
-        // Update online status
-        (async () => {
-            try {
-                const { db } = await import('./config/firebase');
-                const admin = await import('firebase-admin');
-                await db.collection('users').doc(socket.user.uid).update({
-                    isOnline: true,
-                    lastActive: admin.firestore.FieldValue.serverTimestamp()
-                });
-            } catch (error) {
-                console.error('[Socket] Error updating connect status:', error);
-            }
-        })();
+        // Update online status (Skip for bots)
+        if (!socket.user.uid.startsWith('bot_')) {
+            (async () => {
+                try {
+                    const { db } = await import('./config/firebase');
+                    const admin = await import('firebase-admin');
+                    await db.collection('users').doc(socket.user.uid).update({
+                        isOnline: true,
+                        lastActive: admin.firestore.FieldValue.serverTimestamp()
+                    });
+                } catch (error) {
+                    console.error('[Socket] Error updating connect status:', error);
+                }
+            })();
+        }
 
         // Check for reconnection
         sessionService.handleReconnection(socket, socket.user.uid);
@@ -159,6 +162,15 @@ io.on('connection', (socket: any) => {
         console.log(`[Socket] Sending ICE servers to ${socket.id} for user ${uid}`);
         const iceServers = sessionService.getIceServersConfig(uid);
         socket.emit('ice_servers_config', { iceServers });
+    });
+
+    // Handle bot_ready
+    socket.on('bot_ready', (data: any) => {
+        console.log(`[Socket] Bot ready: ${socket.id}`);
+        // In production, verify auth/secret here
+        if (socket.user && socket.user.uid) {
+            queueService.registerBot(socket.id, socket.user.uid);
+        }
     });
 
     // Handle join_queue
