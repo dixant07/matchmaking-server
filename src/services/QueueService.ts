@@ -224,8 +224,8 @@ class QueueService {
                     // console.log(`[Queue] Widening ${user.uid} to Stage 1 (Ignore Location)`);
                 }
 
-                // Stage 2: Ignore Gender (after 15s)
-                if (waitingTime > 15000 && user.widenStage === 1) {
+                // Stage 2: Ignore Gender (after 10s)
+                if (waitingTime > 10000 && user.widenStage === 1) {
                     // Only widen gender if they are not DIAMOND tier
                     if (user.tier !== 'DIAMOND') {
                         user.widenStage = 2;
@@ -233,15 +233,21 @@ class QueueService {
                     }
                 }
 
-                // Stage 3: Bot Match (after 30s)
-                if (waitingTime > 30000 && this.availableBots.length > 0) {
-                    // console.log(`[Queue] User ${user.uid} waiting > 30s. Matching with Bot.`);
-                    this.matchWithBot(user, io);
-                    // Since matchWithBot removes them from queue, we should probably stop iterating or be careful?
-                    // forEach continues... but matchWithBot modified queue indirectly?
-                    // No, `this.removeFromQueue` modifies `this.queues.male`.
-                    // We are iterating a reference passed in `checkQueue`.
-                    // Safe enough for this pass, next pass they will be gone.
+                // Stage 3: No match found - notify client to connect to local bot (after 15s)
+                if (waitingTime > 15000) {
+                    console.log(`[Queue] User ${user.uid} waiting > 15s. Sending no_match_found for local bot.`);
+
+                    // Get socket and emit no_match_found
+                    const socket = io.sockets.sockets.get(user.socketId);
+                    if (socket) {
+                        socket.emit('no_match_found', {
+                            reason: 'timeout',
+                            waitedMs: waitingTime
+                        });
+                    }
+
+                    // Remove from queue
+                    this.removeFromQueue(user.socketId);
                 }
             });
         };

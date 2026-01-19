@@ -433,6 +433,33 @@ io.on('connection', (socket: any) => {
         removeFromQueue(socket.id); // This function is already imported from matchController
     });
 
+    // Handle user joining local bot room (marks user as busy)
+    socket.on('join_bot_room', (data: { botId: string }) => {
+        const uid = socket.user?.uid;
+        if (!uid) return;
+
+        const botRoomId = `bot-room-${uid}`;
+        socket.join(botRoomId);
+        console.log(`[BotRoom] User ${uid} joined bot room: ${botRoomId} (Bot: ${data.botId})`);
+
+        // Store bot room info for cleanup
+        socket.botRoomId = botRoomId;
+        socket.isInBotRoom = true;
+    });
+
+    // Handle user leaving bot room (allows re-queue)
+    socket.on('leave_bot_room', () => {
+        const uid = socket.user?.uid;
+        if (!uid) return;
+
+        if (socket.botRoomId) {
+            socket.leave(socket.botRoomId);
+            console.log(`[BotRoom] User ${uid} left bot room: ${socket.botRoomId}`);
+            socket.botRoomId = null;
+            socket.isInBotRoom = false;
+        }
+    });
+
     // ===============================
     // Admin Commands (from REST API server)
     // ===============================
