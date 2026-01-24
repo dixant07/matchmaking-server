@@ -234,8 +234,8 @@ class QueueService {
                 }
 
                 // Stage 3: No match found - notify client to connect to local bot (after 15s)
-                if (waitingTime > 15000) {
-                    console.log(`[Queue] User ${user.uid} waiting > 15s. Sending no_match_found for local bot.`);
+                if (waitingTime > 30000) {
+                    console.log(`[Queue] User ${user.uid} waiting > 30s. Sending no_match_found for local bot.`);
 
                     // Get socket and emit no_match_found
                     const socket = io.sockets.sockets.get(user.socketId);

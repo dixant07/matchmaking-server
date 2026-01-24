@@ -267,18 +267,49 @@ class SessionService {
         this.activeRooms.delete(roomId);
     }
 
-    public handleDisconnect(socketId: string) {
+    public handleDisconnect(socketId: string, io: Server) {
         const uid = this.socketToUid.get(socketId);
         if (uid) {
             console.log(`[Session] Handle Disconnect: Socket ${socketId} belonged to ${uid}`);
             this.socketToUid.delete(socketId);
 
             const currentActiveSocket = this.uidToSocket.get(uid);
-            console.log(`[Session] Current active socket for ${uid} is ${currentActiveSocket}`);
 
             if (currentActiveSocket === socketId) {
+                // The ACTIVE socket for this user disconnected.
+                // This means they are truly offline effectively for the match.
                 this.uidToSocket.delete(uid);
                 console.log(`[Session] Removed UID ${uid} from registry (Clean disconnect).`);
+
+                // CHECK FOR ACTIVE SESSION -> NOTIFY OPPONENT
+                if (this.sessionCache.has(uid)) {
+                    const session = this.sessionCache.get(uid)!;
+                    const opponentUid = session.opponentId;
+                    console.log(`[Session] User ${uid} disconnected while in session with ${opponentUid}. Notify skip.`);
+
+                    // Notify Opponent
+                    const opponentSockets = this.getSocketIdsForUser(opponentUid);
+                    opponentSockets.forEach(sid => {
+                        io.to(sid).emit('match_skipped');
+                    });
+
+                    // Cleanup session
+                    this.sessionCache.delete(uid);
+                    this.sessionCache.delete(opponentUid);
+                }
+
+                // CHECK FOR PENDING ROOMS
+                for (const [roomId, room] of this.activeRooms.entries()) {
+                    if (room.playerA.uid === uid || room.playerB.uid === uid) {
+                        console.log(`[Session] Aborting pending room ${roomId} due to disconnect of ${uid}`);
+
+                        const otherPlayer = room.playerA.uid === uid ? room.playerB : room.playerA;
+                        io.to(otherPlayer.socketId).emit('match_skipped');
+
+                        this.activeRooms.delete(roomId);
+                    }
+                }
+
             } else {
                 console.log(`[Session] DID NOT remove UID ${uid}. Active socket ${currentActiveSocket} != Disconnected ${socketId}`);
             }

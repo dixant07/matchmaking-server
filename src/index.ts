@@ -102,7 +102,7 @@ io.on('connection', (socket: any) => {
     socket.on('disconnect', async () => {
         removeFromQueue(socket.id);
         queueService.unregisterBot(socket.id);
-        sessionService.handleDisconnect(socket.id);
+        sessionService.handleDisconnect(socket.id, io);
 
         if (socket.user && socket.user.uid && !socket.user.uid.startsWith('bot_')) {
             try {
