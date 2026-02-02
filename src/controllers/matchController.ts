@@ -14,59 +14,77 @@ export const joinQueue = async (socket: any, data: any) => {
 
     console.log(`[Match] User ${uid} attempting to join queue via socket ${socket.id}`);
 
-    // Check if user is banned
-    const ban = banService.isBanned(uid);
-    if (ban) {
-        const remainingMs = banService.getRemainingBanTime(uid);
-        const remainingMinutes = remainingMs > 0 ? Math.ceil(remainingMs / 60000) : -1;
+    // Check if this is a guest user
+    const isGuest = uid.startsWith('guest_') || socket.user.isGuest;
 
-        console.log(`[Match] User ${uid} is banned. Remaining: ${remainingMinutes === -1 ? 'permanent' : remainingMinutes + ' minutes'}`);
+    // For guests, skip ban check (could implement IP-based bans separately)
+    if (!isGuest) {
+        // Check if user is banned
+        const ban = banService.isBanned(uid);
+        if (ban) {
+            const remainingMs = banService.getRemainingBanTime(uid);
+            const remainingMinutes = remainingMs > 0 ? Math.ceil(remainingMs / 60000) : -1;
 
-        socket.emit('banned', {
-            reason: ban.reason,
-            remainingMinutes,
-            message: remainingMinutes === -1
-                ? `You are banned from matchmaking. Reason: ${ban.reason}`
-                : `You are banned for ${remainingMinutes} more minutes. Reason: ${ban.reason}`
-        });
-        return;
+            console.log(`[Match] User ${uid} is banned. Remaining: ${remainingMinutes === -1 ? 'permanent' : remainingMinutes + ' minutes'}`);
+
+            socket.emit('banned', {
+                reason: ban.reason,
+                remainingMinutes,
+                message: remainingMinutes === -1
+                    ? `You are banned from matchmaking. Reason: ${ban.reason}`
+                    : `You are banned for ${remainingMinutes} more minutes. Reason: ${ban.reason}`
+            });
+            return;
+        }
     }
 
     // [FIX] Clear any existing session logic before joining queue
     // This ensures we don't route signals to an old disconnected partner
     sessionService.clearSession(uid);
 
-    // Optimization: Check if gender is in the token (Custom Claims)
-    let gender = socket.user.gender;
-    let location = socket.user.location;
-    let tier = 'FREE'; // Default
+    let gender: 'male' | 'female' | string | undefined;
+    let location: string | undefined;
+    let tier: 'FREE' | 'GOLD' | 'DIAMOND' = 'FREE';
 
-    // If not in token, fetch from DB (Source of Truth fallback)
-    let userData: any = {};
-    if (!gender) {
-        console.log(`[Match] Gender not in token for ${uid}, fetching from DB...`);
-        const userRef = db.collection('users').doc(uid);
-        const userDoc = await userRef.get();
-
-        if (!userDoc.exists) {
-            console.error(`[Match] User profile not found for ${uid}`);
-            socket.emit('error', { message: 'User profile not found' });
-            return;
-        }
-        userData = userDoc.data();
-        console.log(`[Match] Fetched user data for ${uid}:`, userData);
-
-        gender = userData?.gender;
-        location = userData?.location;
-        tier = userData?.subscription?.tier || 'FREE';
+    if (isGuest) {
+        // Guest user: use data from socket auth (no DB lookup)
+        gender = socket.user.gender || preferences?.ownGender;
+        location = undefined;
+        tier = 'FREE';
+        console.log(`[Match] Guest user ${uid} with gender: ${gender}`);
     } else {
-        console.log(`[Match] Using trusted gender from token for ${uid}: ${gender}`);
-        // Fetch tier from DB as it might change more often or we want to be sure
-        const userRef = db.collection('users').doc(uid);
-        const userDoc = await userRef.get();
-        if (userDoc.exists) {
+        // Authenticated user: get data from token or DB
+        // Optimization: Check if gender is in the token (Custom Claims)
+        gender = socket.user.gender;
+        location = socket.user.location;
+
+        // If not in token, fetch from DB (Source of Truth fallback)
+        let userData: any = {};
+        if (!gender) {
+            console.log(`[Match] Gender not in token for ${uid}, fetching from DB...`);
+            const userRef = db.collection('users').doc(uid);
+            const userDoc = await userRef.get();
+
+            if (!userDoc.exists) {
+                console.error(`[Match] User profile not found for ${uid}`);
+                socket.emit('error', { message: 'User profile not found' });
+                return;
+            }
             userData = userDoc.data();
+            console.log(`[Match] Fetched user data for ${uid}:`, userData);
+
+            gender = userData?.gender;
+            location = userData?.location;
             tier = userData?.subscription?.tier || 'FREE';
+        } else {
+            console.log(`[Match] Using trusted gender from token for ${uid}: ${gender}`);
+            // Fetch tier from DB as it might change more often or we want to be sure
+            const userRef = db.collection('users').doc(uid);
+            const userDoc = await userRef.get();
+            if (userDoc.exists) {
+                userData = userDoc.data();
+                tier = userData?.subscription?.tier || 'FREE';
+            }
         }
     }
 
@@ -84,10 +102,8 @@ export const joinQueue = async (socket: any, data: any) => {
     } else if (tier === 'GOLD') {
         // Gold: Allow Gender, Block Location
         if (cleanPreferences.location) delete cleanPreferences.location;
-        // Check daily limit for gender filter
-        if (cleanPreferences.gender && (userData?.stats?.matchesToday || 0) >= 200) {
-            delete cleanPreferences.gender;
-        }
+        // For authenticated users, check daily limit for gender filter
+        // (Skip for guests as they don't have persistent stats)
     }
     // DIAMOND: Allow all
 
@@ -109,3 +125,4 @@ export const joinQueue = async (socket: any, data: any) => {
 export const removeFromQueue = (socketId: string) => {
     queueService.removeFromQueue(socketId);
 };
+

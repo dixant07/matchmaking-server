@@ -201,6 +201,12 @@ class QueueService {
     }
 
     private async updateStats(uid: string) {
+        // Skip stats update for guest users (no DB entry)
+        if (uid.startsWith('guest_')) {
+            console.log(`[Queue] Skipping stats update for guest user ${uid}`);
+            return;
+        }
+
         try {
             const userRef = db.collection('users').doc(uid);
             await userRef.update({

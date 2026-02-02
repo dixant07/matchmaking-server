@@ -183,6 +183,13 @@ class SessionService {
 
         this.activeRooms.set(roomId, roomData);
 
+        // Get user info (name) from sockets for guest support
+        const socketObjA = io.sockets.sockets.get(socketA) as any;
+        const socketObjB = io.sockets.sockets.get(socketB) as any;
+        const userAName = socketObjA?.user?.name || null;
+        const userBName = socketObjB?.user?.name || null;
+        const userAIsGuest = socketObjA?.user?.isGuest || false;
+        const userBIsGuest = socketObjB?.user?.isGuest || false;
 
         const iceServersA = buildIceServersForUser(userA.uid);
         const iceServersB = buildIceServersForUser(userB.uid);
@@ -195,6 +202,8 @@ class SessionService {
             role: "A",
             opponentId: userB.socketId, // Send current socket for WebRTC
             opponentUid: userB.uid, // Send UID for game logic & persistence
+            opponentName: userBName, // Send opponent name (for guests)
+            opponentIsGuest: userBIsGuest,
             isInitiator: true,
             iceServers: iceServersA
         });
@@ -205,6 +214,8 @@ class SessionService {
             role: "B",
             opponentId: userA.socketId,
             opponentUid: userA.uid,
+            opponentName: userAName, // Send opponent name (for guests)
+            opponentIsGuest: userAIsGuest,
             isInitiator: false,
             iceServers: iceServersB
         });

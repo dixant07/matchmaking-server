@@ -62,6 +62,7 @@ if (process.env.REDIS_URL) {
 io.use(async (socket: any, next) => {
     const token = socket.handshake.auth.token;
     const userId = socket.handshake.auth.userId;
+    const gender = socket.handshake.auth.gender;
     const serverKey = socket.handshake.auth.serverKey;
 
     // Check for admin server connection
@@ -75,6 +76,20 @@ io.use(async (socket: any, next) => {
     }
 
     try {
+        // Check for guest users (prefix: guest_)
+        if (effectiveUid.startsWith('guest_')) {
+            const guestName = socket.handshake.auth.guestName;
+            console.log(`[Auth] Guest user connecting: ${effectiveUid}, gender: ${gender}, name: ${guestName}`);
+            socket.user = {
+                uid: effectiveUid,
+                email: 'guest@rumi.app',
+                gender: gender || 'unknown',
+                name: guestName || 'Guest',
+                isGuest: true
+            };
+            return next();
+        }
+
         // Optimize: if it doesn't look like a JWT, treat as raw UID immediately
         if (!effectiveUid.includes('.')) {
             console.log(`[Auth] Allowing bypass for user: ${effectiveUid}`);
@@ -104,7 +119,7 @@ io.on('connection', (socket: any) => {
         queueService.unregisterBot(socket.id);
         sessionService.handleDisconnect(socket.id, io);
 
-        if (socket.user && socket.user.uid && !socket.user.uid.startsWith('bot_')) {
+        if (socket.user && socket.user.uid && !socket.user.uid.startsWith('bot_') && !socket.user.uid.startsWith('guest_')) {
             try {
                 const { db } = await import('./config/firebase');
                 const admin = await import('firebase-admin');
@@ -122,8 +137,8 @@ io.on('connection', (socket: any) => {
     if (socket.user && socket.user.uid) {
         sessionService.registerSocket(socket.id, socket.user.uid);
 
-        // Update online status (Skip for bots)
-        if (!socket.user.uid.startsWith('bot_')) {
+        // Update online status (Skip for bots and guests)
+        if (!socket.user.uid.startsWith('bot_') && !socket.user.uid.startsWith('guest_')) {
             (async () => {
                 try {
                     const { db } = await import('./config/firebase');
