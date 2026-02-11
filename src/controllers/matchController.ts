@@ -20,9 +20,9 @@ export const joinQueue = async (socket: any, data: any) => {
     // For guests, skip ban check (could implement IP-based bans separately)
     if (!isGuest) {
         // Check if user is banned
-        const ban = banService.isBanned(uid);
+        const ban = await banService.isBanned(uid);
         if (ban) {
-            const remainingMs = banService.getRemainingBanTime(uid);
+            const remainingMs = await banService.getRemainingBanTime(uid);
             const remainingMinutes = remainingMs > 0 ? Math.ceil(remainingMs / 60000) : -1;
 
             console.log(`[Match] User ${uid} is banned. Remaining: ${remainingMinutes === -1 ? 'permanent' : remainingMinutes + ' minutes'}`);

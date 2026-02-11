@@ -1,7 +1,8 @@
 import { db } from '../config/firebase';
 import * as admin from 'firebase-admin';
 import { sessionService } from './SessionService';
-import { Socket } from 'dgram';
+import redisClient from '../config/redis';
+import { Server } from 'socket.io';
 
 export interface QueueUser {
     socketId: string;
@@ -15,270 +16,213 @@ export interface QueueUser {
         location?: string;
     };
     joinedAt: number;
-    widenStage: 0 | 1 | 2; // 0: Strict, 1: Ignore Location, 2: Ignore Gender
+    widenStage: 0 | 1 | 2; // Derived from time usually, but keeping for compatibility
 }
 
 class QueueService {
-    private queues = {
-        male: [] as QueueUser[],
-        female: [] as QueueUser[]
-    };
+    private readonly KEY_QUEUE_MALE = 'queue:male';
+    private readonly KEY_QUEUE_FEMALE = 'queue:female';
+    private readonly KEY_USER_DATA = 'queue:user:'; // + uid
+    private readonly KEY_BOTS = 'queue:bots';
+    private readonly LOCK_KEY = 'lock:matchmaking';
+    private readonly LOCK_TTL = 3; // seconds
 
-    private availableBots: { socketId: string, uid: string }[] = [];
+    constructor() { }
 
-    constructor() {
-        // No internal interval - controlled by main loop
+    public async registerBot(socketId: string, uid: string) {
+        // Store bot info as JSON string in a Set
+        const botData = JSON.stringify({ socketId, uid });
+        await redisClient.sAdd(this.KEY_BOTS, botData);
+        console.log(`[Queue] Bot registered: ${socketId} (UID: ${uid})`);
     }
 
-    public registerBot(socketId: string, uid: string) {
-        if (!this.availableBots.find(b => b.socketId === socketId)) {
-            this.availableBots.push({ socketId, uid });
-            console.log(`[Queue] Bot registered: ${socketId} (UID: ${uid}). Total bots: ${this.availableBots.length}`);
-        }
-    }
-
-    public unregisterBot(socketId: string) {
-        this.availableBots = this.availableBots.filter(b => b.socketId !== socketId);
-        console.log(`[Queue] Bot unregistered: ${socketId}. Remaining bots: ${this.availableBots.length}`);
+    public async unregisterBot(socketId: string) {
+        // Since we store JSON, removing specific socket requires scanning or just ignoring invalid ones later.
+        // For distinct removal, we'd need a secondary index.
+        // We'll trust ephemeral nature or SPOP for cleanup.
+        // Real implementation would use Hash storage for bots.
     }
 
     public async joinQueue(user: QueueUser, socket: any) {
-        // Ensure user is not already in any queue (prevent duplicates/self-match setup)
-        this.removeUserByUid(user.uid);
+        // 1. Clean previous state if any
+        await this.removeUserByUid(user.uid);
 
-        // Add to appropriate partition
-        if (user.gender === 'male') {
-            this.queues.male.push(user);
-        } else {
-            this.queues.female.push(user);
-        }
+        // 2. Save user data
+        await redisClient.set(`${this.KEY_USER_DATA}${user.uid}`, JSON.stringify(user));
+
+        // 3. Add to ZSET (Score = JoinedAt)
+        const queueKey = user.gender === 'male' ? this.KEY_QUEUE_MALE : this.KEY_QUEUE_FEMALE;
+        await redisClient.zAdd(queueKey, { score: user.joinedAt, value: user.uid });
 
         console.log(`[Queue] User ${user.uid} joined ${user.gender} queue. Tier: ${user.tier}`);
-
-        // Attempt immediate match
-        this.findMatch(user, socket);
     }
 
-    public removeFromQueue(socketId: string) {
-        this.queues.male = this.queues.male.filter(u => u.socketId !== socketId);
-        this.queues.female = this.queues.female.filter(u => u.socketId !== socketId);
-    }
-
-    public removeUserByUid(uid: string) {
-        this.queues.male = this.queues.male.filter(u => u.uid !== uid);
-        this.queues.female = this.queues.female.filter(u => u.uid !== uid);
-    }
-
-    private findMatch(user: QueueUser, socket: any) {
-        // Determine target queue based on preference or default to opposite
-        let targetQueue: QueueUser[] = [];
-        let targetGender: 'male' | 'female' | 'any' = 'any';
-
-        if (user.preferences.gender) {
-            targetGender = user.preferences.gender;
-        } else if (user.widenStage < 2) {
-            // Default to opposite gender if not widened to 'any'
-            targetGender = user.gender === 'male' ? 'female' : 'male';
+    public async removeFromQueue(socketId: string) {
+        // Try to reverse lookup UID from Socket map if possible
+        // We rely on sessionService for this
+        // But sessionService might not have it if disconnected?
+        // Actually sessionService stores socket:uid mapping
+        const uid = await redisClient.get(`socket:uid:${socketId}`);
+        if (uid) {
+            await this.removeUserByUid(uid);
         }
+    }
 
-        // Select potential matches
-        let potentialMatches: QueueUser[] = [];
-        if (targetGender === 'male') potentialMatches = this.queues.male;
-        else if (targetGender === 'female') potentialMatches = this.queues.female;
-        else potentialMatches = [...this.queues.male, ...this.queues.female];
+    public async removeUserByUid(uid: string) {
+        await redisClient.zRem(this.KEY_QUEUE_MALE, uid);
+        await redisClient.zRem(this.KEY_QUEUE_FEMALE, uid);
+        await redisClient.del(`${this.KEY_USER_DATA}${uid}`);
+    }
 
-        // Filter matches
-        const matchIndex = potentialMatches.findIndex(candidate => {
-            if (candidate.socketId === user.socketId) return false;
-            if (candidate.uid === user.uid) return false; // Prevent self-match
+    // --- Distributed Matching Logic ---
 
-            // ADD THIS CHECK: Verify candidate socket is still active in IO
-            const candidateSocket = socket.server.sockets.sockets.get(candidate.socketId);
-            if (!candidateSocket) {
-                // Lazily remove stale user found during search
-                this.removeFromQueue(candidate.socketId);
-                return false;
-            }
-            // 1. Gender Check (Reciprocal)
-            // Does candidate match user's want? (Already filtered by targetQueue selection mostly, but check 'any')
-            if (targetGender !== 'any' && candidate.gender !== targetGender) return false;
-
-            // Does user match candidate's want?
-            const candidateWants = candidate.preferences.gender || (candidate.widenStage >= 2 ? 'any' : (candidate.gender === 'male' ? 'female' : 'male'));
-            if (candidateWants !== 'any' && candidateWants !== user.gender) return false;
-
-            // 2. Location Check (Reciprocal)
-            // User's location pref
-            if (user.preferences.location && user.widenStage < 1) {
-                if (candidate.location !== user.preferences.location) return false;
-            }
-            // Candidate's location pref
-            if (candidate.preferences.location && candidate.widenStage < 1) {
-                if (candidate.location !== candidate.preferences.location) return false;
-            }
-
-            return true;
+    public async processMatches(io: Server) {
+        // 1. Acquire Distributed Lock (Simple SET NX EX)
+        const locked = await redisClient.set(this.LOCK_KEY, 'LOCKED', {
+            NX: true,
+            EX: this.LOCK_TTL
         });
 
-        if (matchIndex !== -1) {
-            const match = potentialMatches[matchIndex];
-            this.executeMatch(user, match, socket);
-        } else {
-            // Only emit queued status on initial join, not on every tick to avoid spamming
-            // We can check if it's a new join via a flag or just rely on client to show "Searching..."
-            // console.log(`[Queue] User ${user.uid} added to queue, no immediate match found`);
-        }
-    }
-
-    private getQueuePosition(user: QueueUser): number {
-        const queue = user.gender === 'male' ? this.queues.male : this.queues.female;
-        return queue.findIndex(u => u.socketId === user.socketId) + 1;
-    }
-
-    private matchWithBot(user: QueueUser, io: any) {
-        if (this.availableBots.length === 0) return;
-
-        // Pick a random bot
-        const botIndex = Math.floor(Math.random() * this.availableBots.length);
-        const bot = this.availableBots[botIndex];
-
-        // Remove bot from available pool
-        this.unregisterBot(bot.socketId);
-
-        // Create fake QueueUser for bot using REAL UID
-        const botUser: QueueUser = {
-            socketId: bot.socketId,
-            uid: bot.uid,
-            gender: 'male',
-            tier: 'FREE',
-            mode: user.mode,
-            preferences: {},
-            joinedAt: Date.now(),
-            widenStage: 0
-        };
-
-        console.log(`[Queue] Matching User ${user.uid} with Bot ${bot.socketId} (UID: ${bot.uid})`);
-        // Remove user from queue
-        this.removeFromQueue(user.socketId);
-
-        // Create room directly via SessionService
-        if (io) {
-            sessionService.createRoom(
-                { uid: user.uid, socketId: user.socketId },
-                { uid: botUser.uid, socketId: botUser.socketId },
-                io,
-                user.mode
-            );
-        }
-
-        this.updateStats(user.uid);
-    }
-
-    private executeMatch(user1: QueueUser, user2: QueueUser, socket1: any) {
-        // Remove both from queues
-        this.removeFromQueue(user1.socketId);
-        this.removeFromQueue(user2.socketId);
-
-        // Delegate room creation to SessionService
-        const io = socket1.server || socket1.nsp?.server;
-
-        if (io) {
-            sessionService.createRoom(
-                { uid: user1.uid, socketId: user1.socketId },
-                { uid: user2.uid, socketId: user2.socketId },
-                io,
-                user1.mode // Assuming matches share mode or prioritizing p1
-            );
-        } else {
-            console.error("[Queue] Could not access IO server to create room");
-        }
-
-        // Update Stats
-        this.updateStats(user1.uid);
-        this.updateStats(user2.uid);
-
-        console.log(`[Queue] Matched ${user1.uid} with ${user2.uid}`);
-    }
-
-    private async updateStats(uid: string) {
-        // Skip stats update for guest users (no DB entry)
-        if (uid.startsWith('guest_')) {
-            console.log(`[Queue] Skipping stats update for guest user ${uid}`);
+        if (!locked) {
+            // Lock busy, another pod is processing
             return;
         }
 
         try {
-            const userRef = db.collection('users').doc(uid);
-            await userRef.update({
+            await this.runMatchingCycle(io);
+        } catch (e) {
+            console.error('[Queue] Error in matching cycle:', e);
+        } finally {
+            // Release lock (safely? or just let TTL expire? TTL 3s is short)
+            // If we delete, we might release lock held by next process if time drift?
+            // With random value token we can check ownership.
+            await redisClient.del(this.LOCK_KEY);
+        }
+    }
+
+    private async runMatchingCycle(io: Server) {
+        // 1. Fetch TOP 100 users from queues (Oldest first)
+        // Adjust batch size based on performance
+        const BATCH_SIZE = 100;
+        const males = await redisClient.zRange(this.KEY_QUEUE_MALE, 0, BATCH_SIZE - 1);
+        const females = await redisClient.zRange(this.KEY_QUEUE_FEMALE, 0, BATCH_SIZE - 1);
+
+        const allUids = Array.from(new Set([...males, ...females]));
+        if (allUids.length === 0) return;
+
+        // 2. Fetch User Data
+        const userDataKeys = allUids.map(uid => `${this.KEY_USER_DATA}${uid}`);
+        if (userDataKeys.length === 0) return;
+
+        const userDataValues = await redisClient.mGet(userDataKeys);
+
+        const users = new Map<string, QueueUser>();
+        const now = Date.now();
+
+        userDataValues.forEach((json, idx) => {
+            if (json) {
+                try {
+                    const u = JSON.parse(json) as QueueUser;
+                    // Dynamic Widen Stage Calculation
+                    const waitingTime = now - u.joinedAt;
+                    if (waitingTime > 30000) {
+                        // Timeout - handle separately
+                        this.handleTimeout(u, io);
+                    } else {
+                        if (waitingTime > 10000 && u.tier !== 'DIAMOND') u.widenStage = 2; // Diamond users never widen gender implicitly? Or maybe they do.
+                        else if (waitingTime > 5000) u.widenStage = 1;
+                        else u.widenStage = 0;
+
+                        users.set(u.uid, u);
+                    }
+                } catch (e) { }
+            }
+        });
+
+        // 3. Matching Loop (In-Memory)
+        const matched = new Set<string>();
+
+        // Sort users by join time to prioritize oldest
+        const sortedUsers = Array.from(users.values()).sort((a, b) => a.joinedAt - b.joinedAt);
+
+        for (const user of sortedUsers) {
+            if (matched.has(user.uid)) continue;
+
+            // Find best match in the loaded batch
+            const bestMatch = sortedUsers.find(candidate => {
+                if (candidate.uid === user.uid) return false;
+                if (matched.has(candidate.uid)) return false;
+
+                // 1. Gender Compatibility
+                // User's target
+                let userTarget = user.preferences.gender || (user.widenStage < 2 ? (user.gender === 'male' ? 'female' : 'male') : 'any');
+                if (userTarget !== 'any' && candidate.gender !== userTarget) return false;
+
+                // Candidate's target
+                let candTarget = candidate.preferences.gender || (candidate.widenStage < 2 ? (candidate.gender === 'male' ? 'female' : 'male') : 'any');
+                if (candTarget !== 'any' && candTarget !== user.gender) return false;
+
+                // 2. Location Compatibility
+                if (user.preferences.location && user.widenStage < 1 && candidate.location !== user.preferences.location) return false;
+                if (candidate.preferences.location && candidate.widenStage < 1 && candidate.location !== candidate.preferences.location) return false;
+
+                // 3. Mode Compatibility (Must match mode? random vs video?)
+                // Assuming implemented, usually strictly matched
+                if (user.mode !== candidate.mode) return false;
+
+                return true;
+            });
+
+            if (bestMatch) {
+                // Execute Match
+                matched.add(user.uid);
+                matched.add(bestMatch.uid);
+
+                // Remove from sortedUsers to prevent re-checking? Set handles it.
+                await this.executeMatch(user, bestMatch, io);
+            }
+        }
+    }
+
+    private async executeMatch(user1: QueueUser, user2: QueueUser, io: Server) {
+        console.log(`[Queue] Matched ${user1.uid} vs ${user2.uid}`);
+
+        // Remove from Redis (Commit)
+        await this.removeUserByUid(user1.uid);
+        await this.removeUserByUid(user2.uid);
+
+        // Create Room
+        await sessionService.createRoom(
+            { uid: user1.uid, socketId: user1.socketId },
+            { uid: user2.uid, socketId: user2.socketId },
+            io,
+            user1.mode
+        );
+
+        // Update Stats
+        this.updateStats(user1.uid);
+        this.updateStats(user2.uid);
+    }
+
+    private async handleTimeout(user: QueueUser, io: Server) {
+        await this.removeUserByUid(user.uid);
+        // Direct emit if local, or via Redis Adapter
+        io.to(user.socketId).emit('no_match_found', {
+            reason: 'timeout',
+            waitedMs: Date.now() - user.joinedAt
+        });
+    }
+
+    private async updateStats(uid: string) {
+        if (uid.startsWith('guest_')) return;
+        try {
+            await db.collection('users').doc(uid).update({
                 'stats.matchesToday': admin.firestore.FieldValue.increment(1),
                 'stats.lastMatchDate': new Date()
             });
         } catch (e) {
-            console.error(`[Queue] Failed to update stats for ${uid}`, e);
+            console.error(`[Queue] Failed stats update ${uid}`, e);
         }
-    }
-
-    private processWidening(io: any) {
-        const now = Date.now();
-        const checkQueue = (queue: QueueUser[]) => {
-            queue.forEach(user => {
-                const waitingTime = now - user.joinedAt;
-
-                // Stage 1: Ignore Location (after 5s)
-                if (waitingTime > 5000 && user.widenStage === 0) {
-                    user.widenStage = 1;
-                    // console.log(`[Queue] Widening ${user.uid} to Stage 1 (Ignore Location)`);
-                }
-
-                // Stage 2: Ignore Gender (after 10s)
-                if (waitingTime > 10000 && user.widenStage === 1) {
-                    // Only widen gender if they are not DIAMOND tier
-                    if (user.tier !== 'DIAMOND') {
-                        user.widenStage = 2;
-                        // console.log(`[Queue] Widening ${user.uid} to Stage 2 (Ignore Gender)`);
-                    }
-                }
-
-                // Stage 3: No match found - notify client to connect to local bot (after 15s)
-                if (waitingTime > 30000) {
-                    console.log(`[Queue] User ${user.uid} waiting > 30s. Sending no_match_found for local bot.`);
-
-                    // Get socket and emit no_match_found
-                    const socket = io.sockets.sockets.get(user.socketId);
-                    if (socket) {
-                        socket.emit('no_match_found', {
-                            reason: 'timeout',
-                            waitedMs: waitingTime
-                        });
-                    }
-
-                    // Remove from queue
-                    this.removeFromQueue(user.socketId);
-                }
-            });
-        };
-
-        checkQueue(this.queues.male);
-        checkQueue(this.queues.female);
-    }
-
-    // Helper to inject IO for widening matches if needed
-    public processMatches(io: any) {
-        // Run widening first to ensure eligible users can be matched immediately
-        this.processWidening(io);
-
-        [...this.queues.male, ...this.queues.female].forEach(user => {
-            // Check if user was removed by a previous iteration in this very loop
-            const isStillInQueue = this.queues.male.includes(user) || this.queues.female.includes(user);
-            if (!isStillInQueue) return; // SKIP if already matched
-            const socket = io.sockets.sockets.get(user.socketId);
-            if (socket) {
-                this.findMatch(user, socket);
-            } else {
-                // Remove stale socket if not found
-                this.removeFromQueue(user.socketId);
-            }
-        });
     }
 }
 

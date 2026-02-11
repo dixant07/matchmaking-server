@@ -1,38 +1,48 @@
+import redisClient from '../config/redis';
+
 /**
  * BanService - Manages temporary bans for users in matchmaking
+ * Uses Redis for persistence and automatic expiration (TTL)
  */
 
 interface BanEntry {
     uid: string;
     reason: string;
     bannedAt: number;
-    expiresAt: number; // 0 = until server restart
+    expiresAt: number; // 0 = until manually unbanned (simulating permanent)
 }
 
 class BanService {
-    private bannedUsers = new Map<string, BanEntry>();
-
     constructor() {
-        // Cleanup expired bans every minute
-        setInterval(() => this.cleanupExpiredBans(), 60000);
+        // No cleanup interval needed; Redis handles TTL
     }
 
     /**
      * Ban a user for a specified duration
      * @param uid - User ID to ban
      * @param reason - Reason for the ban
-     * @param durationMinutes - Duration in minutes (0 = until restart)
+     * @param durationMinutes - Duration in minutes (0 = permanent/indefinite)
      */
-    public banUser(uid: string, reason: string, durationMinutes: number = 60): void {
+    public async banUser(uid: string, reason: string, durationMinutes: number = 60): Promise<void> {
         const now = Date.now();
         const expiresAt = durationMinutes > 0 ? now + (durationMinutes * 60 * 1000) : 0;
+        const key = `ban:${uid}`;
 
-        this.bannedUsers.set(uid, {
+        const banData: BanEntry = {
             uid,
             reason,
             bannedAt: now,
             expiresAt
-        });
+        };
+
+        // Store ban details
+        await redisClient.set(key, JSON.stringify(banData));
+
+        // Set TTL if not permanent
+        if (durationMinutes > 0) {
+            // Redis EXPIRE uses seconds
+            await redisClient.expire(key, durationMinutes * 60);
+        }
 
         console.log(`[Ban] User ${uid} banned for ${durationMinutes > 0 ? durationMinutes + ' minutes' : 'indefinitely'}. Reason: ${reason}`);
     }
@@ -41,9 +51,11 @@ class BanService {
      * Unban a user
      * @param uid - User ID to unban
      */
-    public unbanUser(uid: string): boolean {
-        if (this.bannedUsers.has(uid)) {
-            this.bannedUsers.delete(uid);
+    public async unbanUser(uid: string): Promise<boolean> {
+        const key = `ban:${uid}`;
+        const result = await redisClient.del(key);
+
+        if (result > 0) {
             console.log(`[Ban] User ${uid} unbanned`);
             return true;
         }
@@ -55,18 +67,18 @@ class BanService {
      * @param uid - User ID to check
      * @returns Ban entry if banned, null otherwise
      */
-    public isBanned(uid: string): BanEntry | null {
-        const ban = this.bannedUsers.get(uid);
+    public async isBanned(uid: string): Promise<BanEntry | null> {
+        const key = `ban:${uid}`;
+        const data = await redisClient.get(key);
 
-        if (!ban) return null;
+        if (!data) return null;
 
-        // Check if ban expired
-        if (ban.expiresAt > 0 && Date.now() >= ban.expiresAt) {
-            this.bannedUsers.delete(uid);
+        try {
+            return JSON.parse(data) as BanEntry;
+        } catch (e) {
+            console.error(`[Ban] Failed to parse ban data for ${uid}`, e);
             return null;
         }
-
-        return ban;
     }
 
     /**
@@ -74,37 +86,57 @@ class BanService {
      * @param uid - User ID to check
      * @returns Remaining time in ms, -1 if permanent, 0 if not banned
      */
-    public getRemainingBanTime(uid: string): number {
-        const ban = this.isBanned(uid);
-        if (!ban) return 0;
-        if (ban.expiresAt === 0) return -1; // Permanent
-        return Math.max(0, ban.expiresAt - Date.now());
-    }
+    public async getRemainingBanTime(uid: string): Promise<number> {
+        const key = `ban:${uid}`;
 
-    /**
-     * Clean up expired bans
-     */
-    private cleanupExpiredBans(): void {
-        const now = Date.now();
-        let cleaned = 0;
+        // Check if key exists
+        const exists = await redisClient.exists(key);
+        if (!exists) return 0;
 
-        for (const [uid, ban] of this.bannedUsers.entries()) {
-            if (ban.expiresAt > 0 && now >= ban.expiresAt) {
-                this.bannedUsers.delete(uid);
-                cleaned++;
-            }
-        }
+        // Get TTL from Redis
+        const ttlSeconds = await redisClient.ttl(key);
 
-        if (cleaned > 0) {
-            console.log(`[Ban] Cleaned up ${cleaned} expired bans`);
-        }
+        // TTL -1 means no expiry (permanent)
+        // TTL -2 means key doesn't exist (handled by exists check usually, but safe to check)
+
+        if (ttlSeconds === -1) return -1;
+        if (ttlSeconds === -2) return 0;
+
+        return ttlSeconds * 1000;
     }
 
     /**
      * Get all currently banned users
+     * Note: This is an expensive operation in Redis (SCAN), use judiciously.
+     * In a production environment with millions of keys, this should be avoided or paginated.
      */
-    public getBannedUsers(): BanEntry[] {
-        return Array.from(this.bannedUsers.values());
+    public async getBannedUsers(): Promise<BanEntry[]> {
+        const bans: BanEntry[] = [];
+        let cursor: any = 0; // Use any to bypass version-specific type definition mismatch (number vs string)
+
+        try {
+            do {
+                const result = await redisClient.scan(cursor, { MATCH: 'ban:*', COUNT: 100 });
+                cursor = result.cursor;
+                const keys = result.keys;
+
+                if (keys.length > 0) {
+                    // mGet returns (string | null)[] usually
+                    const values = await redisClient.mGet(keys);
+                    values.forEach(val => {
+                        if (val) {
+                            try {
+                                bans.push(JSON.parse(val));
+                            } catch (e) { }
+                        }
+                    });
+                }
+            } while (cursor !== 0 && cursor !== '0');
+        } catch (err) {
+            console.error('[Ban] Error scanning banned users:', err);
+        }
+
+        return bans;
     }
 }
 

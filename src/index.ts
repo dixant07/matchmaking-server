@@ -117,7 +117,7 @@ io.on('connection', (socket: any) => {
     socket.on('disconnect', async () => {
         removeFromQueue(socket.id);
         queueService.unregisterBot(socket.id);
-        sessionService.handleDisconnect(socket.id, io);
+        await sessionService.handleDisconnect(socket.id, io);
 
         if (socket.user && socket.user.uid && !socket.user.uid.startsWith('bot_') && !socket.user.uid.startsWith('guest_')) {
             try {
@@ -154,20 +154,21 @@ io.on('connection', (socket: any) => {
         }
 
         // Check for reconnection
+        // We don't await here as it might emit events back to valid socket
         sessionService.handleReconnection(socket, socket.user.uid);
     }
 
     // Handle connection_stable
-    socket.on('connection_stable', (data: any) => {
+    socket.on('connection_stable', async (data: any) => {
         const { roomId, service } = data;
         console.log(`[Session] Received 'connection_stable' from ${socket.id} (UID: ${socket.user?.uid}) for ${service} in ${roomId}`);
-        sessionService.handleConnectionStable(socket, roomId, service);
+        await sessionService.handleConnectionStable(socket, roomId, service);
     });
 
     // Handle reconnect request (explicit)
-    socket.on('reconnect', (data: any) => {
+    socket.on('reconnect', async (data: any) => {
         if (socket.user && socket.user.uid) {
-            sessionService.handleReconnection(socket, socket.user.uid);
+            await sessionService.handleReconnection(socket, socket.user.uid);
         }
     });
 
@@ -193,7 +194,7 @@ io.on('connection', (socket: any) => {
 
     // WebRTC Signaling
     // WebRTC Signaling
-    socket.on('offer', (data: any) => {
+    socket.on('offer', async (data: any) => {
         // [DEBUG] Log full payload to check for targetUid presence
         console.log(`[Signal] 'offer' payload:`, JSON.stringify(data));
 
@@ -221,12 +222,12 @@ io.on('connection', (socket: any) => {
 
         // Fallback: Resolve via UID
         if (!targetUid && socket.user?.uid) {
-            targetUid = sessionService.getOpponentUid(socket.user.uid);
+            targetUid = await sessionService.getOpponentUid(socket.user.uid);
             if (targetUid) console.log(`[Signal] Resolved opponent UID for offer: ${targetUid}`);
         }
 
         if (targetUid) {
-            const sockets = sessionService.getSocketIdsForUser(targetUid);
+            const sockets = await sessionService.getSocketIdsForUser(targetUid);
             if (sockets.length > 0) {
                 console.log(`[Signal] Relaying offer from ${socket.id} to user ${targetUid} (Sockets: ${sockets.join(', ')})`);
                 sockets.forEach(sid => {
@@ -240,7 +241,7 @@ io.on('connection', (socket: any) => {
         }
     });
 
-    socket.on('answer', (data: any) => {
+    socket.on('answer', async (data: any) => {
         // [DEBUG] Log full payload
         console.log(`[Signal] 'answer' payload:`, JSON.stringify(data));
 
@@ -262,12 +263,12 @@ io.on('connection', (socket: any) => {
         }
 
         if (!targetUid && socket.user?.uid) {
-            targetUid = sessionService.getOpponentUid(socket.user.uid);
+            targetUid = await sessionService.getOpponentUid(socket.user.uid);
             if (targetUid) console.log(`[Signal] Resolved opponent UID for answer: ${targetUid}`);
         }
 
         if (targetUid) {
-            const sockets = sessionService.getSocketIdsForUser(targetUid);
+            const sockets = await sessionService.getSocketIdsForUser(targetUid);
             if (sockets.length > 0) {
                 sockets.forEach(sid => {
                     io.to(sid).emit('answer', { answer, from: socket.id });
@@ -280,7 +281,7 @@ io.on('connection', (socket: any) => {
         }
     });
 
-    socket.on('ice-candidate', (data: any) => {
+    socket.on('ice-candidate', async (data: any) => {
         let { candidate, to, targetUid } = data;
         // console.log(`[Signal] ICE candidate from ${socket.id} -> ${to}`);
 
@@ -293,11 +294,11 @@ io.on('connection', (socket: any) => {
         }
 
         if (!targetUid && socket.user?.uid) {
-            targetUid = sessionService.getOpponentUid(socket.user.uid);
+            targetUid = await sessionService.getOpponentUid(socket.user.uid);
         }
 
         if (targetUid) {
-            const sockets = sessionService.getSocketIdsForUser(targetUid);
+            const sockets = await sessionService.getSocketIdsForUser(targetUid);
             if (sockets.length > 0) {
                 sockets.forEach(sid => {
                     io.to(sid).emit('ice-candidate', { candidate, from: socket.id });
@@ -307,7 +308,7 @@ io.on('connection', (socket: any) => {
     });
 
     // Video Signaling
-    socket.on('video-offer', (data: any) => {
+    socket.on('video-offer', async (data: any) => {
         let { offer, to, targetUid } = data; // Check if client sends targetUid for video
 
         if (targetUid === socket.user?.uid) return;
@@ -323,12 +324,12 @@ io.on('connection', (socket: any) => {
         }
 
         if (!targetUid && socket.user?.uid) {
-            targetUid = sessionService.getOpponentUid(socket.user.uid);
+            targetUid = await sessionService.getOpponentUid(socket.user.uid);
         }
 
         if (targetUid) {
             console.log(`[Signal] Relaying video-offer from ${socket.id} to user ${targetUid}`);
-            const sockets = sessionService.getSocketIdsForUser(targetUid);
+            const sockets = await sessionService.getSocketIdsForUser(targetUid);
             sockets.forEach(sid => {
                 io.to(sid).emit('video-offer', { offer, from: socket.id, fromUid: socket.user.uid });
             });
@@ -338,12 +339,12 @@ io.on('connection', (socket: any) => {
         }
     });
 
-    socket.on('video-answer', (data: any) => {
+    socket.on('video-answer', async (data: any) => {
         let { answer, to, targetUid } = data;
 
         // If targetUid is provided (which it should be), use it to find the FRESH socket
         if (!to && targetUid) {
-            const sockets = sessionService.getSocketIdsForUser(targetUid);
+            const sockets = await sessionService.getSocketIdsForUser(targetUid);
             sockets.forEach(sid => {
                 io.to(sid).emit('video-answer', { answer, from: socket.id });
             });
@@ -353,12 +354,12 @@ io.on('connection', (socket: any) => {
         if (targetUid === socket.user?.uid) return;
 
         if (!targetUid && socket.user?.uid) {
-            targetUid = sessionService.getOpponentUid(socket.user.uid);
+            targetUid = await sessionService.getOpponentUid(socket.user.uid);
         }
 
         if (targetUid) {
             console.log(`[Signal] Relaying video-answer from ${socket.id} to user ${targetUid}`);
-            const sockets = sessionService.getSocketIdsForUser(targetUid);
+            const sockets = await sessionService.getSocketIdsForUser(targetUid);
             sockets.forEach(sid => {
                 io.to(sid).emit('video-answer', { answer, from: socket.id });
             });
@@ -368,17 +369,17 @@ io.on('connection', (socket: any) => {
         }
     });
 
-    socket.on('video-ice-candidate', (data: any) => {
+    socket.on('video-ice-candidate', async (data: any) => {
         let { candidate, to, targetUid } = data;
 
         if (targetUid === socket.user?.uid) return;
 
         if (!targetUid && socket.user?.uid) {
-            targetUid = sessionService.getOpponentUid(socket.user.uid);
+            targetUid = await sessionService.getOpponentUid(socket.user.uid);
         }
 
         if (targetUid) {
-            const sockets = sessionService.getSocketIdsForUser(targetUid);
+            const sockets = await sessionService.getSocketIdsForUser(targetUid);
             sockets.forEach(sid => {
                 io.to(sid).emit('video-ice-candidate', { candidate, from: socket.id });
             });
@@ -389,9 +390,9 @@ io.on('connection', (socket: any) => {
     });
 
     // Friend Invite System
-    socket.on('send_invite', (data: any) => {
+    socket.on('send_invite', async (data: any) => {
         const { targetUid } = data;
-        const targetSockets = sessionService.getSocketIdsForUser(targetUid);
+        const targetSockets = await sessionService.getSocketIdsForUser(targetUid);
 
         if (targetSockets.length > 0) {
             console.log(`[Invite] Sending invite from ${socket.user.uid} to ${targetUid}`);
@@ -409,15 +410,15 @@ io.on('connection', (socket: any) => {
         }
     });
 
-    socket.on('accept_invite', (data: any) => {
+    socket.on('accept_invite', async (data: any) => {
         const { inviterUid } = data;
-        const inviterSockets = sessionService.getSocketIdsForUser(inviterUid);
+        const inviterSockets = await sessionService.getSocketIdsForUser(inviterUid);
 
         if (inviterSockets.length > 0) {
             const inviterSocketId = inviterSockets[0]; // Pick first active socket
 
             // Create a match immediately
-            sessionService.createRoom(
+            await sessionService.createRoom(
                 { uid: inviterUid, socketId: inviterSocketId },
                 { uid: socket.user.uid, socketId: socket.id },
                 io,
@@ -428,9 +429,9 @@ io.on('connection', (socket: any) => {
         }
     });
 
-    socket.on('reject_invite', (data: any) => {
+    socket.on('reject_invite', async (data: any) => {
         const { inviterUid } = data;
-        const inviterSockets = sessionService.getSocketIdsForUser(inviterUid);
+        const inviterSockets = await sessionService.getSocketIdsForUser(inviterUid);
 
         if (inviterSockets.length > 0) {
             inviterSockets.forEach(sId => {
@@ -439,8 +440,8 @@ io.on('connection', (socket: any) => {
         }
     });
 
-    socket.on('skip_match', () => {
-        sessionService.handleSkipMatch(socket.id, io);
+    socket.on('skip_match', async () => {
+        await sessionService.handleSkipMatch(socket.id, io);
     });
 
     socket.on('leave_queue', () => {
@@ -479,14 +480,14 @@ io.on('connection', (socket: any) => {
     // Admin Commands (from REST API server)
     // ===============================
 
-    socket.on('admin_kick_user', (data: { targetUid: string; reason?: string }) => {
+    socket.on('admin_kick_user', async (data: { targetUid: string; reason?: string }) => {
         if (!socket.user?.isAdmin) {
             socket.emit('admin_action_result', { success: false, action: 'kick', message: 'Unauthorized' });
             return;
         }
 
         const { targetUid, reason } = data;
-        const targetSockets = sessionService.getSocketIdsForUser(targetUid);
+        const targetSockets = await sessionService.getSocketIdsForUser(targetUid);
 
         if (targetSockets.length > 0) {
             console.log(`[Admin] Kicking user ${targetUid}. Reason: ${reason || 'No reason'}`);
@@ -498,7 +499,7 @@ io.on('connection', (socket: any) => {
             });
 
             // Skip any active match
-            sessionService.handleSkipMatch(targetSockets[0], io);
+            await sessionService.handleSkipMatch(targetSockets[0], io);
 
             socket.emit('admin_action_result', { success: true, action: 'kick', message: `User ${targetUid} kicked` });
         } else {
@@ -506,7 +507,7 @@ io.on('connection', (socket: any) => {
         }
     });
 
-    socket.on('admin_ban_user', (data: { targetUid: string; reason: string; durationMinutes: number }) => {
+    socket.on('admin_ban_user', async (data: { targetUid: string; reason: string; durationMinutes: number }) => {
         if (!socket.user?.isAdmin) {
             socket.emit('admin_action_result', { success: false, action: 'ban', message: 'Unauthorized' });
             return;
@@ -515,10 +516,10 @@ io.on('connection', (socket: any) => {
         const { targetUid, reason, durationMinutes } = data;
 
         // Add to ban list
-        banService.banUser(targetUid, reason, durationMinutes);
+        await banService.banUser(targetUid, reason, durationMinutes);
 
         // Also kick them immediately
-        const targetSockets = sessionService.getSocketIdsForUser(targetUid);
+        const targetSockets = await sessionService.getSocketIdsForUser(targetUid);
         if (targetSockets.length > 0) {
             targetSockets.forEach(sid => {
                 removeFromQueue(sid);
@@ -528,20 +529,20 @@ io.on('connection', (socket: any) => {
                     message: `You have been banned for ${durationMinutes > 0 ? durationMinutes + ' minutes' : 'an indefinite period'}`
                 });
             });
-            sessionService.handleSkipMatch(targetSockets[0], io);
+            await sessionService.handleSkipMatch(targetSockets[0], io);
         }
 
         socket.emit('admin_action_result', { success: true, action: 'ban', message: `User ${targetUid} banned for ${durationMinutes} minutes` });
     });
 
-    socket.on('admin_unban_user', (data: { targetUid: string }) => {
+    socket.on('admin_unban_user', async (data: { targetUid: string }) => {
         if (!socket.user?.isAdmin) {
             socket.emit('admin_action_result', { success: false, action: 'unban', message: 'Unauthorized' });
             return;
         }
 
         const { targetUid } = data;
-        const result = banService.unbanUser(targetUid);
+        const result = await banService.unbanUser(targetUid);
 
         socket.emit('admin_action_result', {
             success: result,
@@ -550,14 +551,14 @@ io.on('connection', (socket: any) => {
         });
     });
 
-    socket.on('admin_force_disconnect', (data: { targetUid: string }) => {
+    socket.on('admin_force_disconnect', async (data: { targetUid: string }) => {
         if (!socket.user?.isAdmin) {
             socket.emit('admin_action_result', { success: false, action: 'disconnect', message: 'Unauthorized' });
             return;
         }
 
         const { targetUid } = data;
-        const targetSockets = sessionService.getSocketIdsForUser(targetUid);
+        const targetSockets = await sessionService.getSocketIdsForUser(targetUid);
 
         if (targetSockets.length > 0) {
             console.log(`[Admin] Force disconnecting user ${targetUid}`);
