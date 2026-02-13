@@ -22,13 +22,23 @@ const ADMIN_SERVER_KEY = process.env.MATCHMAKING_SERVER_KEY || 'server-secret-ke
 const SOCKET_PATH = process.env.SOCKET_IO_PATH || '/socket.io';
 
 // Create HTTP server (no Express needed for pure WebSocket)
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
     // Simple health check endpoint - respond on both root and prefixed paths
     if (req.url === '/health' || req.url === `${SOCKET_PATH}/health`) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'ok', service: 'matchmaking', path: SOCKET_PATH }));
         return;
     }
+
+    // Analytics Endpoint
+    if (req.url === '/stats' || req.url === '/api/stats') {
+        const { analyticsService } = await import('./services/AnalyticsService');
+        const stats = await analyticsService.getRealTimeStats();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(stats));
+        return;
+    }
+
     res.writeHead(404);
     res.end('Not Found');
 });

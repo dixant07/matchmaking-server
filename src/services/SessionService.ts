@@ -1,6 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import crypto from 'crypto';
 import redisClient from '../config/redis';
+import { analyticsService } from './AnalyticsService';
 
 interface RoomData {
     roomId: string;
@@ -16,6 +17,7 @@ interface SessionData {
     roomId: string;
     opponentId: string; // uid of opponent
     role: 'A' | 'B';
+    startTime: number;
 }
 
 // ICE Server type definitions
@@ -69,6 +71,7 @@ class SessionService {
     private readonly PREFIX_SESSION = 'session:';
     private readonly PREFIX_SOCKET_UID = 'socket:uid:';
     private readonly PREFIX_USER_SOCKET = 'user:socket:';
+    private readonly SET_ONLINE_USERS = 'users:online';
 
     constructor() { }
 
@@ -84,6 +87,12 @@ class SessionService {
 
         // user:socket:{uid} -> socketId (One active socket per user preference)
         await redisClient.set(`${this.PREFIX_USER_SOCKET}${uid}`, socketId, { EX: 86400 });
+
+        // Add to online users set (Analytics)
+        if (!uid.startsWith('bot_') && !uid.startsWith('guest_')) {
+            await redisClient.sAdd(this.SET_ONLINE_USERS, uid);
+            analyticsService.logUserConnected(uid, socketId);
+        }
     }
 
     /**
@@ -200,8 +209,9 @@ class SessionService {
 
         console.log(`[Session] Room ${roomId} fully established.`);
 
-        const sessionA: SessionData = { roomId, opponentId: room.playerB.uid, role: 'A' };
-        const sessionB: SessionData = { roomId, opponentId: room.playerA.uid, role: 'B' };
+        const startTime = Date.now();
+        const sessionA: SessionData = { roomId, opponentId: room.playerB.uid, role: 'A', startTime };
+        const sessionB: SessionData = { roomId, opponentId: room.playerA.uid, role: 'B', startTime };
 
         // Store active sessions (Unlimited TTL - until disconnect)
         await redisClient.set(`${this.PREFIX_SESSION}${room.playerA.uid}`, JSON.stringify(sessionA));
@@ -209,6 +219,10 @@ class SessionService {
 
         io.to(room.playerA.socketId).emit('session_established', { roomId });
         io.to(room.playerB.socketId).emit('session_established', { roomId });
+
+        // Analytics: Match Start
+        const isBotMatch = room.playerA.uid.startsWith('bot_') || room.playerB.uid.startsWith('bot_');
+        analyticsService.logMatchStart(roomId, [room.playerA.uid, room.playerB.uid], 'random', isBotMatch);
 
         // Remove pending room
         await redisClient.del(`${this.PREFIX_ROOM}${roomId}`);
@@ -246,6 +260,12 @@ class SessionService {
                 await redisClient.del(`${this.PREFIX_USER_SOCKET}${uid}`);
                 console.log(`[Session] Active socket for ${uid} disconnected.`);
 
+                // Analytics: User Disconnected
+                if (!uid.startsWith('bot_') && !uid.startsWith('guest_')) {
+                    await redisClient.sRem(this.SET_ONLINE_USERS, uid);
+                    analyticsService.logUserDisconnected(uid, 0); // TODO: Track session duration if needed
+                }
+
                 // Check Active Session
                 const sessionStr = await redisClient.get(`${this.PREFIX_SESSION}${uid}`);
                 if (sessionStr) {
@@ -253,6 +273,12 @@ class SessionService {
                     const opponentUid = session.opponentId;
 
                     console.log(`[Session] User ${uid} disconnected from active session. Notifying ${opponentUid}.`);
+
+                    // Analytics: Match End
+                    const durationSeconds = (Date.now() - session.startTime) / 1000;
+                    const isBotMatch = uid.startsWith('bot_') || opponentUid.startsWith('bot_');
+                    analyticsService.logMatchEnd(session.roomId, durationSeconds, 'disconnect', isBotMatch);
+
 
                     // Notify Opponent
                     const opponentSockets = await this.getSocketIdsForUser(opponentUid);
@@ -322,6 +348,11 @@ class SessionService {
             if (sessionStr) {
                 const session = JSON.parse(sessionStr) as SessionData;
                 const opponentUid = session.opponentId;
+
+                // Analytics: Match End
+                const durationSeconds = (Date.now() - session.startTime) / 1000;
+                const isBotMatch = uid.startsWith('bot_') || opponentUid.startsWith('bot_');
+                analyticsService.logMatchEnd(session.roomId, durationSeconds, 'skip', isBotMatch);
 
                 // Notify
                 const uSockets = await this.getSocketIdsForUser(uid);
