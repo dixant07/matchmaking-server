@@ -17,6 +17,7 @@ export interface QueueUser {
     };
     joinedAt: number;
     widenStage: 0 | 1 | 2; // Derived from time usually, but keeping for compatibility
+    botModeActive?: boolean; // New flag to track if user is playing with bot while in queue
 }
 
 class QueueService {
@@ -126,8 +127,20 @@ class QueueService {
                     // Dynamic Widen Stage Calculation
                     const waitingTime = now - u.joinedAt;
                     if (waitingTime > 30000) {
-                        // Timeout - handle separately
-                        this.handleTimeout(u, io);
+                        // Timeout - INSTEAD of removing, trigger bot mode if not already active
+                        if (!u.botModeActive) {
+                            this.triggerBotMode(u, io);
+                            // Mark as bot mode active in Redis so we don't trigger again
+                            u.botModeActive = true;
+                            redisClient.set(`${this.KEY_USER_DATA}${u.uid}`, JSON.stringify(u));
+                        }
+                        
+                        // User remains in queue for real match!
+                        if (waitingTime > 10000 && u.tier !== 'DIAMOND') u.widenStage = 2;
+                        else if (waitingTime > 5000) u.widenStage = 1;
+                        else u.widenStage = 0;
+
+                        users.set(u.uid, u);
                     } else {
                         if (waitingTime > 10000 && u.tier !== 'DIAMOND') u.widenStage = 2; // Diamond users never widen gender implicitly? Or maybe they do.
                         else if (waitingTime > 5000) u.widenStage = 1;
@@ -204,7 +217,16 @@ class QueueService {
         this.updateStats(user2.uid);
     }
 
+    private async triggerBotMode(user: QueueUser, io: Server) {
+        console.log(`[Queue] Triggering Bot Mode for ${user.uid} (staying in queue)`);
+        io.to(user.socketId).emit('start_bot_mode', {
+            // Inform client to start bot loop but stay in queue
+            reason: 'timeout_waiting'
+        });
+    }
+
     private async handleTimeout(user: QueueUser, io: Server) {
+        // DEPRECATED logic - kept for reference if needed
         await this.removeUserByUid(user.uid);
         // Direct emit if local, or via Redis Adapter
         io.to(user.socketId).emit('no_match_found', {
