@@ -126,8 +126,10 @@ class SessionService {
         userA.socketId = currentSocketA;
         userB.socketId = currentSocketB;
 
-        const expectedServices = ['game'];
-        if (mode === 'video') expectedServices.push('video');
+        // Only require 'video' to finalize the session.
+        // Previously required 'game' too, but game signaling doesn't run during video-chat,
+        // so the session was NEVER written to Redis → signal routing broke → 30s drop.
+        const expectedServices = ['video'];
 
         const roomData: RoomData = {
             roomId,
