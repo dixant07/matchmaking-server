@@ -108,7 +108,7 @@ class SessionService {
     /**
      * Create a pending room (handshake state)
      */
-    public async createRoom(userA: { uid: string; socketId: string }, userB: { uid: string; socketId: string }, io: Server, mode: 'random' | 'video' = 'random') {
+    public async createRoom(userA: { uid: string; socketId: string; name?: string }, userB: { uid: string; socketId: string; name?: string }, io: Server, mode: 'random' | 'video' = 'random') {
         const roomId = `room_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
         console.log(`[Session] Creating room ${roomId} for ${userA.uid} vs ${userB.uid}`);
@@ -157,6 +157,8 @@ class SessionService {
             role: "A",
             opponentId: userB.socketId,
             opponentUid: userB.uid,
+            opponentName: userB.name,          // may be undefined for authenticated users (client fetches from Firestore)
+            opponentIsGuest: userB.uid.startsWith('guest_'),
             isInitiator: true,
             iceServers: iceServersA
         });
@@ -167,6 +169,8 @@ class SessionService {
             role: "B",
             opponentId: userA.socketId,
             opponentUid: userA.uid,
+            opponentName: userA.name,          // may be undefined for authenticated users (client fetches from Firestore)
+            opponentIsGuest: userA.uid.startsWith('guest_'),
             isInitiator: false,
             iceServers: iceServersB
         });

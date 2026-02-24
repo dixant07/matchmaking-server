@@ -7,6 +7,7 @@ import { Server } from 'socket.io';
 export interface QueueUser {
     socketId: string;
     uid: string;
+    name?: string; // Display name — crucial for guests (no Firestore profile)
     gender: 'male' | 'female';
     location?: string;
     tier: 'FREE' | 'GOLD' | 'DIAMOND';
@@ -134,7 +135,7 @@ class QueueService {
                             u.botModeActive = true;
                             redisClient.set(`${this.KEY_USER_DATA}${u.uid}`, JSON.stringify(u));
                         }
-                        
+
                         // User remains in queue for real match!
                         if (waitingTime > 10000 && u.tier !== 'DIAMOND') u.widenStage = 2;
                         else if (waitingTime > 5000) u.widenStage = 1;
@@ -206,8 +207,8 @@ class QueueService {
 
         // Create Room
         await sessionService.createRoom(
-            { uid: user1.uid, socketId: user1.socketId },
-            { uid: user2.uid, socketId: user2.socketId },
+            { uid: user1.uid, socketId: user1.socketId, name: user1.name },
+            { uid: user2.uid, socketId: user2.socketId, name: user2.name },
             io,
             user1.mode
         );

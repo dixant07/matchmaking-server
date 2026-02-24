@@ -110,6 +110,7 @@ export const joinQueue = async (socket: any, data: any) => {
     const user: QueueUser = {
         socketId: socket.id,
         uid,
+        name: socket.user.name || socket.user.displayName || undefined, // carry through for match_found
         gender: gender as 'male' | 'female',
         location,
         tier: tier as 'FREE' | 'GOLD' | 'DIAMOND',
