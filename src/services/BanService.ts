@@ -1,4 +1,5 @@
 import redisClient from '../config/redis';
+import log from '../logger';
 
 /**
  * BanService - Manages temporary bans for users in matchmaking
@@ -44,7 +45,7 @@ class BanService {
             await redisClient.expire(key, durationMinutes * 60);
         }
 
-        console.log(`[Ban] User ${uid} banned for ${durationMinutes > 0 ? durationMinutes + ' minutes' : 'indefinitely'}. Reason: ${reason}`);
+        log.info(`[Ban] User ${uid} banned for ${durationMinutes > 0 ? durationMinutes + ' minutes' : 'indefinitely'}. Reason: ${reason}`);
     }
 
     /**
@@ -56,7 +57,7 @@ class BanService {
         const result = await redisClient.del(key);
 
         if (result > 0) {
-            console.log(`[Ban] User ${uid} unbanned`);
+            log.info(`[Ban] User ${uid} unbanned`);
             return true;
         }
         return false;

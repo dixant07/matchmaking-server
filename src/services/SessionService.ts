@@ -2,6 +2,7 @@ import { Server, Socket } from 'socket.io';
 import crypto from 'crypto';
 import redisClient from '../config/redis';
 import { analyticsService } from './AnalyticsService';
+import log from '../logger';
 
 interface RoomData {
     roomId: string;
@@ -80,7 +81,7 @@ class SessionService {
      * TTL: 24 hours (auto-cleanup if stale)
      */
     public async registerSocket(socketId: string, uid: string) {
-        console.log(`[Session] Registering socket ${socketId} for UID ${uid}`);
+        log.info(`[Session] Registering socket ${socketId} for UID ${uid}`);
 
         // socket:uid:{socketId} -> uid
         await redisClient.set(`${this.PREFIX_SOCKET_UID}${socketId}`, uid, { EX: 86400 });
@@ -111,7 +112,7 @@ class SessionService {
     public async createRoom(userA: { uid: string; socketId: string; name?: string }, userB: { uid: string; socketId: string; name?: string }, io: Server, mode: 'random' | 'video' = 'random') {
         const roomId = `room_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
-        console.log(`[Session] Creating room ${roomId} for ${userA.uid} vs ${userB.uid}`);
+        log.info(`[Session] Creating room ${roomId} for ${userA.uid} vs ${userB.uid}`);
 
         // [FIX] Strict lookup of current sockets from Redis to ensure they are online
         // Use the sockets passed in, BUT verify they are still the 'active' ones
@@ -175,7 +176,7 @@ class SessionService {
             iceServers: iceServersB
         });
 
-        console.log(`[Session] Match emitted for ${roomId}`);
+        log.info(`[Session] Match emitted for ${roomId}`);
     }
 
     /**
@@ -213,7 +214,7 @@ class SessionService {
         if (!roomStr) return;
         const room = JSON.parse(roomStr) as RoomData;
 
-        console.log(`[Session] Room ${roomId} fully established.`);
+        log.info(`[Session] Room ${roomId} fully established.`);
 
         const startTime = Date.now();
         const sessionA: SessionData = { roomId, opponentId: room.playerB.uid, role: 'A', startTime };
@@ -241,7 +242,7 @@ class SessionService {
         const sessionStr = await redisClient.get(`${this.PREFIX_SESSION}${uid}`);
         if (sessionStr) {
             const session = JSON.parse(sessionStr) as SessionData;
-            console.log(`[Session] Clearing session for ${uid}`);
+            log.info(`[Session] Clearing session for ${uid}`);
 
             await redisClient.del(`${this.PREFIX_SESSION}${uid}`);
 
@@ -264,7 +265,7 @@ class SessionService {
             if (currentActiveSocket === socketId) {
                 // Active socket disconnected
                 await redisClient.del(`${this.PREFIX_USER_SOCKET}${uid}`);
-                console.log(`[Session] Active socket for ${uid} disconnected.`);
+                log.info(`[Session] Active socket for ${uid} disconnected.`);
 
                 // Analytics: User Disconnected
                 if (!uid.startsWith('bot_') && !uid.startsWith('guest_')) {
@@ -278,7 +279,7 @@ class SessionService {
                     const session = JSON.parse(sessionStr) as SessionData;
                     const opponentUid = session.opponentId;
 
-                    console.log(`[Session] User ${uid} disconnected from active session. Notifying ${opponentUid}.`);
+                    log.info(`[Session] User ${uid} disconnected from active session. Notifying ${opponentUid}.`);
 
                     // Analytics: Match End
                     const durationSeconds = (Date.now() - session.startTime) / 1000;
@@ -314,7 +315,7 @@ class SessionService {
         const sessionStr = await redisClient.get(`${this.PREFIX_SESSION}${uid}`);
         if (sessionStr) {
             const session = JSON.parse(sessionStr) as SessionData;
-            console.log(`[Session] User ${uid} reconnecting to session ${session.roomId}`);
+            log.info(`[Session] User ${uid} reconnecting to session ${session.roomId}`);
 
             const opponentUid = session.opponentId;
             const opponentSockets = await this.getSocketIdsForUser(opponentUid);

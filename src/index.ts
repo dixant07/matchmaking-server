@@ -4,8 +4,10 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-console.log('--- MATCHMAKING SERVER STARTUP ---');
-console.log('Firebase Project ID (env):', process.env.FIREBASE_PROJECT_ID);
+import log from './logger';
+
+log.info('--- MATCHMAKING SERVER STARTUP ---');
+log.info('Firebase Project ID (env):', process.env.FIREBASE_PROJECT_ID);
 
 import { createClient } from 'redis';
 import { createAdapter } from '@socket.io/redis-adapter';
@@ -60,12 +62,12 @@ if (process.env.REDIS_URL) {
 
     Promise.all([pubClient.connect(), subClient.connect()]).then(() => {
         io.adapter(createAdapter(pubClient, subClient));
-        console.log('[Redis] Adapter connected');
+        log.info('[Redis] Adapter connected');
     }).catch(err => {
         console.error('[Redis] Connection error:', err);
     });
 } else {
-    console.log('[Redis] No REDIS_URL provided, using default in-memory adapter');
+    log.info('[Redis] No REDIS_URL provided, using default in-memory adapter');
 }
 
 // Socket Authentication Middleware
@@ -89,7 +91,7 @@ io.use(async (socket: any, next) => {
         // Check for guest users (prefix: guest_)
         if (effectiveUid.startsWith('guest_')) {
             const guestName = socket.handshake.auth.guestName;
-            console.log(`[Auth] Guest user connecting: ${effectiveUid}, gender: ${gender}, name: ${guestName}`);
+            log.info(`[Auth] Guest user connecting: ${effectiveUid}, gender: ${gender}, name: ${guestName}`);
             socket.user = {
                 uid: effectiveUid,
                 email: 'guest@rumi.app',
@@ -102,7 +104,7 @@ io.use(async (socket: any, next) => {
 
         // Optimize: if it doesn't look like a JWT, treat as raw UID immediately
         if (!effectiveUid.includes('.')) {
-            console.log(`[Auth] Allowing bypass for user: ${effectiveUid}`);
+            log.info(`[Auth] Allowing bypass for user: ${effectiveUid}`);
             socket.user = { uid: effectiveUid, email: 'guest@game.com' };
             return next();
         }
@@ -121,7 +123,7 @@ io.use(async (socket: any, next) => {
 
 // Socket Connection Handler
 io.on('connection', (socket: any) => {
-    console.log(`[Socket] User connected: ${socket.id}, UID: ${socket.user?.uid || 'unknown'}`);
+    log.info(`[Socket] User connected: ${socket.id}, UID: ${socket.user?.uid || 'unknown'}`);
 
     // Handle disconnect
     socket.on('disconnect', async () => {
@@ -171,7 +173,7 @@ io.on('connection', (socket: any) => {
     // Handle connection_stable
     socket.on('connection_stable', async (data: any) => {
         const { roomId, service } = data;
-        console.log(`[Session] Received 'connection_stable' from ${socket.id} (UID: ${socket.user?.uid}) for ${service} in ${roomId}`);
+        log.info(`[Session] Received 'connection_stable' from ${socket.id} (UID: ${socket.user?.uid}) for ${service} in ${roomId}`);
         await sessionService.handleConnectionStable(socket, roomId, service);
     });
 
@@ -185,14 +187,14 @@ io.on('connection', (socket: any) => {
     // Handle get_ice_servers request (for embedded mode)
     socket.on('get_ice_servers', () => {
         const uid = socket.user?.uid || 'anonymous';
-        console.log(`[Socket] Sending ICE servers to ${socket.id} for user ${uid}`);
+        log.info(`[Socket] Sending ICE servers to ${socket.id} for user ${uid}`);
         const iceServers = sessionService.getIceServersConfig(uid);
         socket.emit('ice_servers_config', { iceServers });
     });
 
     // Handle bot_ready
     socket.on('bot_ready', (data: any) => {
-        console.log(`[Socket] Bot ready: ${socket.id}`);
+        log.info(`[Socket] Bot ready: ${socket.id}`);
         // In production, verify auth/secret here
         if (socket.user && socket.user.uid) {
             queueService.registerBot(socket.id, socket.user.uid);
@@ -206,10 +208,10 @@ io.on('connection', (socket: any) => {
     // WebRTC Signaling
     socket.on('offer', async (data: any) => {
         // [DEBUG] Log full payload to check for targetUid presence
-        console.log(`[Signal] 'offer' payload:`, JSON.stringify(data));
+        log.info(`[Signal] 'offer' payload:`, JSON.stringify(data));
 
         let { offer, to, targetUid } = data;
-        console.log(`[Signal] Received 'offer' from ${socket.id} -> ${to} (UID: ${targetUid})`);
+        log.info(`[Signal] Received 'offer' from ${socket.id} -> ${to} (UID: ${targetUid})`);
 
         // Loopback Prevention
         if (targetUid === socket.user?.uid) {
@@ -222,7 +224,7 @@ io.on('connection', (socket: any) => {
         if (to) {
             const targetSocket = io.sockets.sockets.get(to);
             if (targetSocket) {
-                console.log(`[Signal] Direct offer routing: ${socket.id} -> ${to}`);
+                log.info(`[Signal] Direct offer routing: ${socket.id} -> ${to}`);
                 io.to(to).emit('offer', { offer, from: socket.id, fromUid: socket.user.uid });
                 return;
             } else {
@@ -233,13 +235,13 @@ io.on('connection', (socket: any) => {
         // Fallback: Resolve via UID
         if (!targetUid && socket.user?.uid) {
             targetUid = await sessionService.getOpponentUid(socket.user.uid);
-            if (targetUid) console.log(`[Signal] Resolved opponent UID for offer: ${targetUid}`);
+            if (targetUid) log.info(`[Signal] Resolved opponent UID for offer: ${targetUid}`);
         }
 
         if (targetUid) {
             const sockets = await sessionService.getSocketIdsForUser(targetUid);
             if (sockets.length > 0) {
-                console.log(`[Signal] Relaying offer from ${socket.id} to user ${targetUid} (Sockets: ${sockets.join(', ')})`);
+                log.info(`[Signal] Relaying offer from ${socket.id} to user ${targetUid} (Sockets: ${sockets.join(', ')})`);
                 sockets.forEach(sid => {
                     io.to(sid).emit('offer', { offer, from: socket.id, fromUid: socket.user.uid });
                 });
@@ -253,10 +255,10 @@ io.on('connection', (socket: any) => {
 
     socket.on('answer', async (data: any) => {
         // [DEBUG] Log full payload
-        console.log(`[Signal] 'answer' payload:`, JSON.stringify(data));
+        log.info(`[Signal] 'answer' payload:`, JSON.stringify(data));
 
         let { answer, to, targetUid } = data;
-        console.log(`[Signal] Received 'answer' from ${socket.id} -> ${to}`);
+        log.info(`[Signal] Received 'answer' from ${socket.id} -> ${to}`);
 
         if (targetUid === socket.user?.uid) return;
 
@@ -264,7 +266,7 @@ io.on('connection', (socket: any) => {
         if (to) {
             const targetSocket = io.sockets.sockets.get(to);
             if (targetSocket) {
-                console.log(`[Signal] Direct answer routing: ${socket.id} -> ${to}`);
+                log.info(`[Signal] Direct answer routing: ${socket.id} -> ${to}`);
                 io.to(to).emit('answer', { answer, from: socket.id });
                 return;
             } else {
@@ -274,7 +276,7 @@ io.on('connection', (socket: any) => {
 
         if (!targetUid && socket.user?.uid) {
             targetUid = await sessionService.getOpponentUid(socket.user.uid);
-            if (targetUid) console.log(`[Signal] Resolved opponent UID for answer: ${targetUid}`);
+            if (targetUid) log.info(`[Signal] Resolved opponent UID for answer: ${targetUid}`);
         }
 
         if (targetUid) {
@@ -293,7 +295,7 @@ io.on('connection', (socket: any) => {
 
     socket.on('ice-candidate', async (data: any) => {
         let { candidate, to, targetUid } = data;
-        // console.log(`[Signal] ICE candidate from ${socket.id} -> ${to}`);
+        // log.info(`[Signal] ICE candidate from ${socket.id} -> ${to}`);
 
         if (targetUid === socket.user?.uid) return;
 
@@ -338,13 +340,13 @@ io.on('connection', (socket: any) => {
         }
 
         if (targetUid) {
-            console.log(`[Signal] Relaying video-offer from ${socket.id} to user ${targetUid}`);
+            log.info(`[Signal] Relaying video-offer from ${socket.id} to user ${targetUid}`);
             const sockets = await sessionService.getSocketIdsForUser(targetUid);
             sockets.forEach(sid => {
                 io.to(sid).emit('video-offer', { offer, from: socket.id, fromUid: socket.user.uid });
             });
         } else {
-            console.log(`[Signal] Relaying video-offer from ${socket.id} to ${to} (Fallback)`);
+            log.info(`[Signal] Relaying video-offer from ${socket.id} to ${to} (Fallback)`);
             io.to(to).emit('video-offer', { offer, from: socket.id, fromUid: socket.user.uid });
         }
     });
@@ -368,13 +370,13 @@ io.on('connection', (socket: any) => {
         }
 
         if (targetUid) {
-            console.log(`[Signal] Relaying video-answer from ${socket.id} to user ${targetUid}`);
+            log.info(`[Signal] Relaying video-answer from ${socket.id} to user ${targetUid}`);
             const sockets = await sessionService.getSocketIdsForUser(targetUid);
             sockets.forEach(sid => {
                 io.to(sid).emit('video-answer', { answer, from: socket.id });
             });
         } else {
-            console.log(`[Signal] Relaying video-answer from ${socket.id} to ${to} (Fallback)`);
+            log.info(`[Signal] Relaying video-answer from ${socket.id} to ${to} (Fallback)`);
             io.to(to).emit('video-answer', { answer, from: socket.id });
         }
     });
@@ -394,7 +396,7 @@ io.on('connection', (socket: any) => {
                 io.to(sid).emit('video-ice-candidate', { candidate, from: socket.id });
             });
         } else {
-            console.log(`[Signal] Relaying video-ice-candidate from ${socket.id} to ${to}`);
+            log.info(`[Signal] Relaying video-ice-candidate from ${socket.id} to ${to}`);
             io.to(to).emit('video-ice-candidate', { candidate, from: socket.id });
         }
     });
@@ -405,7 +407,7 @@ io.on('connection', (socket: any) => {
         const targetSockets = await sessionService.getSocketIdsForUser(targetUid);
 
         if (targetSockets.length > 0) {
-            console.log(`[Invite] Sending invite from ${socket.user.uid} to ${targetUid}`);
+            log.info(`[Invite] Sending invite from ${socket.user.uid} to ${targetUid}`);
             // Send to all of user's active sockets
             targetSockets.forEach(targetSocketId => {
                 io.to(targetSocketId).emit('receive_invite', {
@@ -455,7 +457,7 @@ io.on('connection', (socket: any) => {
     });
 
     socket.on('leave_queue', () => {
-        console.log(`[Queue] User ${socket.user?.uid} manually left the queue.`);
+        log.info(`[Queue] User ${socket.user?.uid} manually left the queue.`);
         removeFromQueue(socket.id); // This function is already imported from matchController
     });
 
@@ -466,7 +468,7 @@ io.on('connection', (socket: any) => {
 
         const botRoomId = `bot-room-${uid}`;
         socket.join(botRoomId);
-        console.log(`[BotRoom] User ${uid} joined bot room: ${botRoomId} (Bot: ${data.botId})`);
+        log.info(`[BotRoom] User ${uid} joined bot room: ${botRoomId} (Bot: ${data.botId})`);
 
         // Store bot room info for cleanup
         socket.botRoomId = botRoomId;
@@ -480,7 +482,7 @@ io.on('connection', (socket: any) => {
 
         if (socket.botRoomId) {
             socket.leave(socket.botRoomId);
-            console.log(`[BotRoom] User ${uid} left bot room: ${socket.botRoomId}`);
+            log.info(`[BotRoom] User ${uid} left bot room: ${socket.botRoomId}`);
             socket.botRoomId = null;
             socket.isInBotRoom = false;
         }
@@ -500,7 +502,7 @@ io.on('connection', (socket: any) => {
         const targetSockets = await sessionService.getSocketIdsForUser(targetUid);
 
         if (targetSockets.length > 0) {
-            console.log(`[Admin] Kicking user ${targetUid}. Reason: ${reason || 'No reason'}`);
+            log.info(`[Admin] Kicking user ${targetUid}. Reason: ${reason || 'No reason'}`);
 
             // Remove from queue
             targetSockets.forEach(sid => {
@@ -571,7 +573,7 @@ io.on('connection', (socket: any) => {
         const targetSockets = await sessionService.getSocketIdsForUser(targetUid);
 
         if (targetSockets.length > 0) {
-            console.log(`[Admin] Force disconnecting user ${targetUid}`);
+            log.info(`[Admin] Force disconnecting user ${targetUid}`);
 
             targetSockets.forEach(sid => {
                 const targetSocket = io.sockets.sockets.get(sid);
@@ -595,12 +597,12 @@ setInterval(() => {
 
 // Graceful shutdown handler
 const gracefulShutdown = (signal: string) => {
-    console.log(`\n${signal} received. Shutting down gracefully...`);
+    log.info(`\n${signal} received. Shutting down gracefully...`);
 
     server.close(() => {
-        console.log('HTTP server closed.');
+        log.info('HTTP server closed.');
         io.close(() => {
-            console.log('Socket.IO server closed.');
+            log.info('Socket.IO server closed.');
             process.exit(0);
         });
     });
@@ -618,7 +620,7 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 // Start server - bind to 0.0.0.0 for container compatibility
 const host = '0.0.0.0';
 server.listen(Number(port), host, () => {
-    console.log(`🚀 Matchmaking server is running on http://${host}:${port}`);
-    console.log(`[Server] Socket.IO path: ${SOCKET_PATH}`);
-    console.log(`[Server] Health check available at http://${host}:${port}/health`);
+    log.info(`🚀 Matchmaking server is running on http://${host}:${port}`);
+    log.info(`[Server] Socket.IO path: ${SOCKET_PATH}`);
+    log.info(`[Server] Health check available at http://${host}:${port}/health`);
 });

@@ -3,6 +3,7 @@ import * as admin from 'firebase-admin';
 import { sessionService } from './SessionService';
 import redisClient from '../config/redis';
 import { Server } from 'socket.io';
+import log from '../logger';
 
 export interface QueueUser {
     socketId: string;
@@ -35,7 +36,7 @@ class QueueService {
         // Store bot info as JSON string in a Set
         const botData = JSON.stringify({ socketId, uid });
         await redisClient.sAdd(this.KEY_BOTS, botData);
-        console.log(`[Queue] Bot registered: ${socketId} (UID: ${uid})`);
+        log.info(`[Queue] Bot registered: ${socketId} (UID: ${uid})`);
     }
 
     public async unregisterBot(socketId: string) {
@@ -56,7 +57,7 @@ class QueueService {
         const queueKey = user.gender === 'male' ? this.KEY_QUEUE_MALE : this.KEY_QUEUE_FEMALE;
         await redisClient.zAdd(queueKey, { score: user.joinedAt, value: user.uid });
 
-        console.log(`[Queue] User ${user.uid} joined ${user.gender} queue. Tier: ${user.tier}`);
+        log.info(`[Queue] User ${user.uid} joined ${user.gender} queue. Tier: ${user.tier}`);
     }
 
     public async removeFromQueue(socketId: string) {
@@ -199,7 +200,7 @@ class QueueService {
     }
 
     private async executeMatch(user1: QueueUser, user2: QueueUser, io: Server) {
-        console.log(`[Queue] Matched ${user1.uid} vs ${user2.uid}`);
+        log.info(`[Queue] Matched ${user1.uid} vs ${user2.uid}`);
 
         // Remove from Redis (Commit)
         await this.removeUserByUid(user1.uid);
@@ -219,7 +220,7 @@ class QueueService {
     }
 
     private async triggerBotMode(user: QueueUser, io: Server) {
-        console.log(`[Queue] Triggering Bot Mode for ${user.uid} (staying in queue)`);
+        log.info(`[Queue] Triggering Bot Mode for ${user.uid} (staying in queue)`);
         io.to(user.socketId).emit('start_bot_mode', {
             // Inform client to start bot loop but stay in queue
             reason: 'timeout_waiting'
